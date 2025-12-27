@@ -1,0 +1,53 @@
+# output 和 model 目录及其所有内容
+output/
+model/
+0.MedicalGPT/
+0.MedicalGPT1/
+
+# 训练日志
+logs/
+*.log
+swanlog/
+
+# 数据文件
+data/**/*.jsonl
+data/**/*.parquet
+data/**/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.temp
+.cache/
