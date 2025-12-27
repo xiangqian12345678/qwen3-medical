@@ -1,0 +1,22 @@
+CUDA_VISIBLE_DEVICES=0,1 python ppo_training.py \
+    --sft_model_path ../../output/sft_merge \
+    --reward_model_path ../../output/rm_merge \
+    --tokenizer_name_or_path ../output/tokenizers_merge \
+    --template_name qwen \
+    --dtype bfloat16 \
+    --train_file_dir ../../data/finetune \
+    --validation_file_dir ../../data/finetune \
+    --max_source_length 256 \
+    --response_length 128 \
+    --per_device_train_batch_size 1 \
+    --gradient_accumulation_steps 4 \
+    --gradient_checkpointing False \
+    --do_train \
+    --total_episodes 8000 \
+    --output_dir ../../output/ppo_adapter \
+    --missing_eos_penalty 1.0 \
+    --eval_strategy steps \
+    --eval_steps 100 \
+    --num_train_epochs 1 \
+    --report_to none
+
