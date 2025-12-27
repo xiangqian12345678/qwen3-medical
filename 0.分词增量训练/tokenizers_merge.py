@@ -7,10 +7,8 @@ import sentencepiece as spm
 from transformers import AutoTokenizer
 
 
-def create_merged_tokenizer(base_tokenizer, domain_sp_model, output_dir, base_tokenizer_dir):
-    """创建合并后的Qwen3格式分词器"""
-
-    # 获取领域分词器的词汇表
+def extract_domain_tokens(domain_sp_model):
+    """从SentencePiece模型中提取有效token"""
     domain_vocab_size = domain_sp_model.get_piece_size()
     domain_tokens = []
 
@@ -20,10 +18,14 @@ def create_merged_tokenizer(base_tokenizer, domain_sp_model, output_dir, base_to
         if token not in ['', '<unk>', '<s>', '</s>']:
             domain_tokens.append(token)
 
-    # 获取基础分词器的词汇表
+    return domain_tokens
+
+
+def merge_vocabularies(base_tokenizer, domain_tokens):
+    """合并基础分词器和领域分词器的词汇表"""
     base_vocab = base_tokenizer.get_vocab()
 
-    # 合并词汇表 - 添加新的领域词汇到基础词汇表中
+    # 找出新增的领域词汇
     new_tokens = []
     for token in domain_tokens:
         if token not in base_vocab:
@@ -33,8 +35,7 @@ def create_merged_tokenizer(base_tokenizer, domain_sp_model, output_dir, base_to
     print(f"领域分词器有效词汇大小: {len(domain_tokens)}")
     print(f"新增领域词汇数量: {len(new_tokens)}")
 
-    # 创建新的词汇表字典
-    # 保持原有token的ID不变，新增的token从最大ID+1开始
+    # 创建合并后的词汇表
     merged_vocab = base_vocab.copy()
     next_id = max(base_vocab.values()) + 1
 
@@ -43,8 +44,11 @@ def create_merged_tokenizer(base_tokenizer, domain_sp_model, output_dir, base_to
         next_id += 1
 
     print(f"合并后分词器词汇表大小: {len(merged_vocab)}")
+    return merged_vocab, new_tokens
 
-    # 复制基础分词器的所有文件到输出目录
+
+def copy_tokenizer_files(base_tokenizer_dir, output_dir):
+    """复制基础分词器文件到输出目录"""
     os.makedirs(output_dir, exist_ok=True)
 
     files_to_copy = [
@@ -63,24 +67,29 @@ def create_merged_tokenizer(base_tokenizer, domain_sp_model, output_dir, base_to
         if os.path.exists(src_file):
             shutil.copy2(src_file, os.path.join(output_dir, file))
 
-    # 更新词汇表文件
+
+def update_vocab_file(output_dir, merged_vocab):
+    """更新vocab.json文件"""
     vocab_file = os.path.join(output_dir, "vocab.json")
     with open(vocab_file, 'w', encoding='utf-8') as f:
         json.dump(merged_vocab, f, ensure_ascii=False, indent=2)
 
-    # 更新tokenizer配置文件
+
+def update_tokenizer_config(output_dir, merged_vocab):
+    """更新tokenizer_config.json文件"""
     tokenizer_config_file = os.path.join(output_dir, "tokenizer_config.json")
     if os.path.exists(tokenizer_config_file):
         with open(tokenizer_config_file, 'r', encoding='utf-8') as f:
             tokenizer_config = json.load(f)
 
-        # 更新词汇表大小
         tokenizer_config["vocab_size"] = len(merged_vocab)
 
         with open(tokenizer_config_file, 'w', encoding='utf-8') as f:
             json.dump(tokenizer_config, f, ensure_ascii=False, indent=2)
 
-    # 更新added_tokens.json文件以包含新增的tokens
+
+def update_added_tokens(output_dir, base_tokenizer_dir, new_tokens, merged_vocab):
+    """更新added_tokens.json文件"""
     added_tokens_file = os.path.join(output_dir, "added_tokens.json")
     added_tokens = {}
 
@@ -97,7 +106,9 @@ def create_merged_tokenizer(base_tokenizer, domain_sp_model, output_dir, base_to
     with open(added_tokens_file, 'w', encoding='utf-8') as f:
         json.dump(added_tokens, f, ensure_ascii=False, indent=2)
 
-    # 更新tokenizer.json文件 - 这是Fast Tokenizer的关键文件
+
+def update_tokenizer_json(output_dir, merged_vocab):
+    """更新tokenizer.json文件（Fast Tokenizer的关键文件）"""
     tokenizer_json_file = os.path.join(output_dir, "tokenizer.json")
     if os.path.exists(tokenizer_json_file):
         with open(tokenizer_json_file, 'r', encoding='utf-8') as f:
@@ -118,18 +129,51 @@ def create_merged_tokenizer(base_tokenizer, domain_sp_model, output_dir, base_to
         with open(tokenizer_json_file, 'w', encoding='utf-8') as f:
             json.dump(tokenizer_data, f, ensure_ascii=False, indent=2)
 
-    # 再次更新tokenizer_config.json，确保vocab_size正确
-    if os.path.exists(tokenizer_config_file):
-        with open(tokenizer_config_file, 'r', encoding='utf-8') as f:
-            tokenizer_config = json.load(f)
 
-        # 强制更新词汇表大小
-        tokenizer_config["vocab_size"] = len(merged_vocab)
+def update_config_json(output_dir, merged_vocab):
+    """更新config.json文件中的vocab_size"""
+    config_json_file = os.path.join(output_dir, "config.json")
+    if os.path.exists(config_json_file):
+        with open(config_json_file, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
 
-        with open(tokenizer_config_file, 'w', encoding='utf-8') as f:
-            json.dump(tokenizer_config, f, ensure_ascii=False, indent=2)
+        # 更新vocab_size
+        if "vocab_size" in config_data:
+            config_data["vocab_size"] = len(merged_vocab)
+            print(f"更新config.json中的vocab_size为: {len(merged_vocab)}")
 
-    # 创建一个新的tokenizer实例
+        with open(config_json_file, 'w', encoding='utf-8') as f:
+            json.dump(config_data, f, ensure_ascii=False, indent=2)
+
+
+def create_merged_tokenizer(base_tokenizer, domain_sp_model, output_dir, base_tokenizer_dir):
+    """创建合并后的Qwen3格式分词器"""
+
+    # 1. 提取领域词汇
+    domain_tokens = extract_domain_tokens(domain_sp_model)
+
+    # 2. 合并词汇表
+    merged_vocab, new_tokens = merge_vocabularies(base_tokenizer, domain_tokens)
+
+    # 3. 复制基础分词器文件
+    copy_tokenizer_files(base_tokenizer_dir, output_dir)
+
+    # 4. 更新各个配置文件
+    # "vocab.json",
+    # "tokenizer_config.json",
+    # "added_tokens.json",
+    # "tokenizer.json",
+    # "config.json",
+    # "configuration.json", 直接拷贝
+    # "merges.txt",         直接拷贝： 存储的是基础分词器的BPE合并规则，新增的领域词汇是通过 added_tokens.json 添加
+    # "special_tokens_map.json", 自动生成： 分词模型存储的时候自动生成该文件
+    update_vocab_file(output_dir, merged_vocab)
+    update_tokenizer_config(output_dir, merged_vocab)
+    update_added_tokens(output_dir, base_tokenizer_dir, new_tokens, merged_vocab)
+    update_tokenizer_json(output_dir, merged_vocab)
+    update_config_json(output_dir, merged_vocab)
+
+    # 5. 创建新的tokenizer实例
     new_tokenizer = AutoTokenizer.from_pretrained(output_dir)
 
     return new_tokenizer

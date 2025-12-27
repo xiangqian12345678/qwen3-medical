@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-@author:XuMing(xuming624@qq.com)
-@description: 
-"""
-
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Sequence
 
@@ -493,7 +487,6 @@ register_conv_template(
     )
 )
 
-
 """deepseek3 template
 Supports: https://huggingface.co/deepseek-ai/DeepSeek-V3
 """
@@ -597,7 +590,6 @@ register_conv_template(
         stop_str="<|im_end|>",
     )
 )
-
 
 register_conv_template(
     Conversation(

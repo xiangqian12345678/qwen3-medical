@@ -1,3 +1,4 @@
+
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Sequence
 
@@ -48,19 +49,70 @@ class Conversation:
             messages: Optional[List[Sequence[str]]] = None,
             system_prompt: Optional[str] = ""
     ) -> List[str]:
+        """
+        格式化对话示例，将消息列表转换为对话格式
+        
+        Args:
+            messages: 可选的消息列表，格式为 [[问题1, 答案1], [问题2, 答案2], ...]
+                     如果为None，则使用self.messages
+            system_prompt: 可选的系统提示词，如果为空字符串则使用self.system_prompt
+        
+        Returns:
+            List[str]: 格式化后的对话列表，包含系统提示、用户问题和机器人回答的交替序列
+        
+        Example:
+            Input:
+                messages = [["你好", "你好！我是AI助手"], ["今天天气如何", "今天天气晴朗"]]
+                system_prompt = "你是一个友好的AI助手"
+                self.sep = "</s>"
+                self.prompt = "USER: {query} ASSISTANT:"
+                self.system_prompt = "默认系统提示"
+            
+            Output:
+                [
+                    "你是一个友好的AI助手</s>USER: 你好 ASSISTANT:",  # 系统提示 + 第一个用户问题
+                    "你好！我是AI助手",                               # 第一个机器人回答
+                    "</s>USER: 今天天气如何 ASSISTANT:",              # 分隔符 + 第二个用户问题
+                    "今天天气晴朗"                                    # 第二个机器人回答
+                ]
+        
+        Example (empty messages):
+            Input:
+                messages = []
+                system_prompt = ""
+                self.system_prompt = ""
+                self.sep = "</s>"
+                self.prompt = "USER: {query} ASSISTANT:"
+            
+            Output:
+                []  # 空列表，因为没有消息需要格式化
+        """
+        # 使用传入的系统提示词或默认的系统提示词
         system_prompt = system_prompt or self.system_prompt
+        # 如果系统提示词不为空，则在末尾添加分隔符
         system_prompt = system_prompt + self.sep if system_prompt else ""  # add separator for non-empty system prompt
+        # 使用传入的消息列表或默认的消息列表
         messages = messages or self.messages
+        # 初始化格式化后的对话列表
         convs = []
+        # 确保messages不为None，如果是None则设为空列表
         if not messages:
             messages = []
+        # 遍历每一轮对话
         for turn_idx, [user_query, bot_resp] in enumerate(messages):
+            # 如果是第一轮对话
             if turn_idx == 0:
+                # 添加系统提示词和第一个用户问题
                 convs.append(system_prompt + self.prompt.format(query=user_query))
+                # 添加第一个机器人回答
                 convs.append(bot_resp)
+            # 如果不是第一轮对话
             else:
+                # 添加分隔符和当前用户问题
                 convs.append(self.sep + self.prompt.format(query=user_query))
+                # 添加当前机器人回答
                 convs.append(bot_resp)
+        # 返回格式化后的对话列表
         return convs
 
     def append_message(self, query: str, answer: str):
@@ -436,6 +488,7 @@ register_conv_template(
     )
 )
 
+
 """deepseek3 template
 Supports: https://huggingface.co/deepseek-ai/DeepSeek-V3
 """
@@ -539,6 +592,7 @@ register_conv_template(
         stop_str="<|im_end|>",
     )
 )
+
 
 register_conv_template(
     Conversation(
