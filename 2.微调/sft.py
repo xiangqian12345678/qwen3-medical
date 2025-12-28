@@ -722,7 +722,10 @@ def load_hf_datasets(data_args, model_args):
     dataset_names = [name.strip() for name in data_args.dataset_name.split(',') if name.strip()]
     dataset_configs = []
     if data_args.dataset_config_name:
-        dataset_configs = [config.strip() for config in data_args.dataset_config_name.split(',') if config.strip()]
+        dataset_configs = [
+            None if (c := config.strip()) in ("", "None", "none") else c
+            for config in data_args.dataset_config_name.split(',')
+        ]
 
     # 补全配置列表长度
     while len(dataset_configs) < len(dataset_names):
@@ -730,10 +733,10 @@ def load_hf_datasets(data_args, model_args):
     dataset_configs = dataset_configs[:len(dataset_names)]
 
     for i, dataset_name in enumerate(dataset_names):
-        config_name = dataset_configs[i]
+        dataset_config = dataset_configs[i]
         try:
-            logger.info(f"加载 HuggingFace 数据集 '{dataset_name}' (配置: {config_name})")
-            named_datasets = load_dataset(dataset_name, config_name, cache_dir=model_args.cache_dir)
+            logger.info(f"加载 HuggingFace 数据集 '{dataset_name}' (配置: {dataset_config})")
+            named_datasets = load_dataset(dataset_name, dataset_config, cache_dir=model_args.cache_dir)
             if not named_datasets:
                 logger.warning(f"数据集 '{dataset_name}' 加载成功但为空")
                 continue

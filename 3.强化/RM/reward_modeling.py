@@ -491,13 +491,10 @@ def process_hub_datasets(args, model_args):
         return None
 
     dataset_names = [name.strip() for name in args.dataset_name.split(",")]
-    dataset_configs = (
-        [
-            None if cfg.strip().lower() == "none" else cfg.strip()
-            for cfg in args.dataset_config_name.split(",")
-        ]
-        if args.dataset_config_name else [None] * len(dataset_names)
-    )
+    dataset_configs = [
+        None if (c := config.strip()) in ("", "None", "none") else c
+        for config in args.dataset_config_name.split(',')
+    ]
 
     if len(dataset_configs) < len(dataset_names):
         # 如果配置数量少于数据集数量，缺省为 None

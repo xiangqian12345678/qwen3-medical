@@ -280,26 +280,29 @@ def load_datasets_from_hub(script_args):
     dataset_names = [name.strip() for name in script_args.dataset_name.split(",") if name.strip()]
 
     # 处理逗号分隔的多个数据集配置名称
-    config_names = None
+    dataset_configs = None
     if hasattr(script_args, 'dataset_config_name') and script_args.dataset_config_name:
-        config_names = [name.strip() for name in script_args.dataset_config_name.split(",") if name.strip()]
+        dataset_configs = [
+            None if (c := config.strip()) in ("", "None", "none") else c
+            for config in script_args.dataset_config_name.split(',')
+        ]
 
     all_datasets = []
 
     logger.info(f"Loading datasets from hub: {dataset_names}")
-    if config_names:
-        logger.info(f"With configs: {config_names}")
+    if dataset_configs:
+        logger.info(f"With configs: {dataset_configs}")
 
     for i, dataset_name in enumerate(dataset_names):
         try:
             # 获取对应的配置名称，如果配置名称数量不足，使用 None
-            config_name = config_names[i] if config_names and i < len(config_names) else None
+            dataset_config = dataset_configs[i] if dataset_configs and i < len(dataset_configs) else None
 
-            logger.info(f"Loading dataset {i + 1}/{len(dataset_names)}: {dataset_name} (config: {config_name})")
+            logger.info(f"Loading dataset {i + 1}/{len(dataset_names)}: {dataset_name} (config: {dataset_config})")
 
             # 加载数据集
-            if config_name:
-                ds = load_dataset(dataset_name, config_name, cache_dir=getattr(script_args, 'cache_dir', None))
+            if dataset_config:
+                ds = load_dataset(dataset_name, dataset_config, cache_dir=getattr(script_args, 'cache_dir', None))
             else:
                 ds = load_dataset(dataset_name, cache_dir=getattr(script_args, 'cache_dir', None))
 
@@ -307,7 +310,7 @@ def load_datasets_from_hub(script_args):
             logger.info(f"Successfully loaded: {list(ds.keys())}")
 
         except Exception as e:
-            logger.error(f"Failed to load dataset '{dataset_name}' (config: {config_name}): {e}")
+            logger.error(f"Failed to load dataset '{dataset_name}' (config: {dataset_config}): {e}")
             # 继续处理其他数据集，不要因为一个失败就全部停止
             continue
 

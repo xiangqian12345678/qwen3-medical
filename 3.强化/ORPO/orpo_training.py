@@ -280,15 +280,18 @@ def load_datasets_from_hub(args):
     """Load multiple datasets from HuggingFace Hub and merge them"""
     # 将逗号分隔的 dataset_name 和 config_name 转为列表
     dataset_names = [name.strip() for name in args.dataset_name.split(",")]
-    config_names = [cfg.strip() if cfg else None for cfg in args.dataset_config_name.split(",")]
+    dataset_configs = [
+        None if (c := config.strip()) in ("", "None", "none") else c
+        for config in args.dataset_config_name.split(',')
+    ]
 
-    # 如果 config_names 数量不足 dataset_names，补 None
-    if len(config_names) < len(dataset_names):
-        config_names.extend([None] * (len(dataset_names) - len(config_names)))
+    # 如果 dataset_configs 数量不足 dataset_names，补 None
+    if len(dataset_configs) < len(dataset_names):
+        dataset_configs.extend([None] * (len(dataset_names) - len(dataset_configs)))
 
     merged_datasets = {}
 
-    for name, config in zip(dataset_names, config_names):
+    for name, config in zip(dataset_names, dataset_configs):
         raw_datasets = load_dataset(name, config, cache_dir=args.cache_dir)
 
         for split in raw_datasets.keys():

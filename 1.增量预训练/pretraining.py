@@ -602,34 +602,34 @@ def load_hub_datasets(data_args, model_args, is_main_process):
 
     # 解析对应的数据集配置名称
     if data_args.dataset_config_name:
-        dataset_config_names = [
+        dataset_configs = [
             None if (c := config.strip()) in ("", "None", "none") else c
             for config in data_args.dataset_config_name.split(',')
         ]
     else:
-        dataset_config_names = [None] * len(dataset_names)
+        dataset_configs = [None] * len(dataset_names)
 
     print(f"dataset_names: {dataset_names}")
-    print(f"dataset_config_names: {dataset_config_names}")
+    print(f"dataset_config_names: {dataset_configs}")
 
     # 确保配置名称数量与数据集数量一致
-    if len(dataset_config_names) != len(dataset_names):
-        raise ValueError(f"数据集名称数量({len(dataset_names)})与配置名称数量({len(dataset_config_names)})不一致")
+    if len(dataset_configs) != len(dataset_names):
+        raise ValueError(f"数据集名称数量({len(dataset_names)})与配置名称数量({len(dataset_configs)})不一致")
 
     all_train_datasets = []
     all_validation_datasets = []
 
     for i, dataset_name in enumerate(dataset_names):
-        config_name = dataset_config_names[i]
+        dataset_config = dataset_configs[i]
 
         if is_main_process:
-            config_info = f" (配置: {config_name})" if config_name else ""
+            config_info = f" (配置: {dataset_config})" if dataset_config else ""
             logger.info(f"正在加载数据集: {dataset_name}{config_info}")
 
         # 从hub下载并加载数据集
         raw_dataset = load_dataset(
             dataset_name,
-            config_name,
+            dataset_config,
             cache_dir=model_args.cache_dir,
             streaming=data_args.streaming,
         )
@@ -645,14 +645,14 @@ def load_hub_datasets(data_args, model_args, is_main_process):
 
             train_data = load_dataset(
                 dataset_name,
-                config_name,
+                dataset_config,
                 split=train_split,
                 cache_dir=model_args.cache_dir,
                 streaming=data_args.streaming,
             )
             val_data = load_dataset(
                 dataset_name,
-                config_name,
+                dataset_config,
                 split=val_split,
                 cache_dir=model_args.cache_dir,
                 streaming=data_args.streaming,
