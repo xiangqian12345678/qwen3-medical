@@ -15,6 +15,7 @@ from trl import (
     ModelConfig,
     get_peft_config,
 )
+from trl.trainer.ppo_config import PPOConfig as OriginalPPOConfig
 
 from template import get_conv_template
 
@@ -23,6 +24,18 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 from dataclasses import dataclass, field
 from typing import Optional
+
+
+# Monkey patch PPOConfig to fix world_size issue
+_original_ppo_config_init = OriginalPPOConfig.__init__
+
+def _patched_ppo_config_init(self, *args, **kwargs):
+    # Ensure world_size has a default value
+    if 'world_size' not in kwargs or kwargs['world_size'] is None:
+        kwargs['world_size'] = int(os.environ.get("WORLD_SIZE", "1"))
+    _original_ppo_config_init(self, *args, **kwargs)
+
+OriginalPPOConfig.__init__ = _patched_ppo_config_init
 
 
 @dataclass
@@ -44,6 +57,16 @@ class PPOArguments:
     # =========================
     # 数据集（HuggingFace Hub）
     # =========================
+
+    tokenizer_name_or_path: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": (
+                "Tokenizer 的路径或名称。"
+                "如果为 None，则使用 sft_model_path 中的 tokenizer。"
+            )
+        },
+    )
 
     dataset_name: Optional[str] = field(
         default=None,
@@ -150,7 +173,15 @@ class PPOArguments:
 
 
 def load_datasets_from_hub(args):
-    """Load multiple datasets from HuggingFace Hub"""
+    """
+    从HuggingFace Hub加载数据集。
+
+    Args:
+        args: 包含数据集配置的参数
+
+    Returns:
+        dict: 包含train和validation数据集的字典
+    """
     dataset_names = [name.strip() for name in args.dataset_name.split(",")]
     dataset_configs = [cfg.strip() if cfg else None for cfg in args.dataset_config.split(",")] \
         if args.dataset_config else [None] * len(dataset_names)
@@ -162,7 +193,7 @@ def load_datasets_from_hub(args):
         dataset = load_dataset(name, cfg, split=args.dataset_train_split)
 
         # Split into train and eval
-        eval_samples = min(100, len(dataset) // 10)  # 可以根据实际数据量调整
+        eval_samples = min(100, len(dataset) // 10)
         train_dataset = dataset.select(range(len(dataset) - eval_samples))
         eval_dataset = dataset.select(range(len(dataset) - eval_samples, len(dataset)))
 
@@ -177,7 +208,15 @@ def load_datasets_from_hub(args):
 
 
 def load_datasets_from_files(args):
-    """Load datasets from local files"""
+    """
+    从本地文件加载数据集。
+
+    Args:
+        args: 包含数据文件目录的参数
+
+    Returns:
+        dict: 包含train和validation数据集的字典
+    """
     data_files = {}
     if args.train_file_dir is not None and os.path.exists(args.train_file_dir):
         train_data_files = glob(f'{args.train_file_dir}/**/*.json', recursive=True) + glob(
@@ -200,9 +239,22 @@ def load_datasets_from_files(args):
 
     return {"train": train_dataset, "validation": eval_dataset}
 
+    return {"train": train_dataset, "validation": eval_dataset}
+
 
 def load_raw_datasets(args):
-    """Load raw datasets from hub or files, and merge them if both exist"""
+    """
+    从HuggingFace Hub或本地文件加载原始数据集。
+
+    Args:
+        args: 包含数据源配置的参数
+
+    Returns:
+        dict: 包含train和validation数据集的字典
+
+    Raises:
+        ValueError: 当没有有效的数据源时抛出异常
+    """
     raw_datasets = None
 
     # Load datasets from hub if specified
@@ -256,7 +308,7 @@ def main():
     args, training_args, model_args, is_main_process = parse_and_setup()
 
     # 加载并配置分词器，设置特殊token（eos_token, bos_token, pad_token）
-    tokenizer = load_and_prepare_tokenizer(training_args, model_args, is_main_process)
+    tokenizer = load_and_prepare_tokenizer(args, training_args, model_args, is_main_process)
 
     # 加载所需的所有模型：策略模型、参考策略模型、奖励模型、价值模型，以及PEFT配置
     policy, ref_policy, reward_model, value_model, peft_config = load_models(training_args, model_args)
@@ -287,12 +339,32 @@ def main():
 # =========================
 
 def parse_and_setup():
+    """
+    解析命令行参数并进行初始化设置。
+
+    Returns:
+        tuple: (args, training_args, model_args, is_main_process)
+            - args: PPO训练参数
+            - training_args: PPO训练配置
+            - model_args: 模型配置
+            - is_main_process: 是否为主进程标志
+    """
+    # 在解析参数之前，确保 WORLD_SIZE 环境变量已设置
+    # torchrun 会设置 LOCAL_RANK、RANK、WORLD_SIZE 等环境变量
+    if "WORLD_SIZE" not in os.environ:
+        if "NNODES" in os.environ and "NPROC_PER_NODE" in os.environ:
+            os.environ["WORLD_SIZE"] = str(int(os.environ["NNODES"]) * int(os.environ["NPROC_PER_NODE"]))
+        elif "NPROC_PER_NODE" in os.environ:
+            os.environ["WORLD_SIZE"] = os.environ["NPROC_PER_NODE"]
+        else:
+            os.environ["WORLD_SIZE"] = "1"
+
     parser = HfArgumentParser(
         (PPOArguments, PPOConfig, ModelConfig)
     )
     args, training_args, model_args = parser.parse_args_into_dataclasses()
 
-    # LOCAL_RANK 是分布式训练框架（如 PyTorch DDP、DeepSpeed、Accelerate 等）自动分配的环境变量
+    # LOCAL_RANK 是分布式训练框架自动分配的环境变量
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     is_main_process = local_rank == 0
 
@@ -308,75 +380,46 @@ def parse_and_setup():
 # Tokenizer
 # =========================
 
-def load_and_prepare_tokenizer(training_args, model_args, is_main_process):
+def load_and_prepare_tokenizer(args, training_args, model_args, is_main_process):
     """
     加载并规范化 tokenizer，确保 eos / bos / pad 等特殊 token 都已正确设置。
 
-    在实际训练（尤其是 SFT / PPO / GRPO 等 RLHF 场景）中：
-    - 不同模型的 tokenizer 对特殊 token 的定义并不统一
-    - 有些模型缺失 eos_token / bos_token / pad_token
-    - 如果不统一补齐，容易在 batch padding、生成、loss 计算时出错
+    Args:
+        args: PPOArguments参数
+        training_args: 训练参数
+        model_args: 模型参数
+        is_main_process: 是否为主进程
 
-    该函数的目标：
-    1. 从指定路径加载 tokenizer
-    2. 检查并补齐 eos_token、bos_token、pad_token
-    3. 只在主进程打印日志（兼容分布式训练）
+    Returns:
+        AutoTokenizer: 配置好的tokenizer
     """
-
-    # 从 SFT 模型路径加载 tokenizer
-    # trust_remote_code=True 允许加载自定义 tokenizer（如 Qwen / InternLM 等）
+    # 从指定的 tokenizer 路径加载，如果未指定则使用 SFT 模型路径
+    tokenizer_path = args.tokenizer_name_or_path if args.tokenizer_name_or_path else training_args.sft_model_path
     tokenizer = AutoTokenizer.from_pretrained(
-        training_args.sft_model_path,
+        tokenizer_path,
         trust_remote_code=model_args.trust_remote_code,
     )
 
-    # =========================
-    # 处理 EOS token
-    # =========================
-    # eos_token 用于标识一句话/序列的结束
-    # 如果缺失，在生成任务和 RL 训练中会导致：
-    # - 生成无法正常停止
-    # - reward / loss 计算异常
+    # 处理 EOS token - 用于标识序列结束
     if tokenizer.eos_token_id is None:
-        # 优先复用已有的 eos_token，其次使用 sep_token 兜底
         tokenizer.eos_token = tokenizer.eos_token or tokenizer.sep_token
-
-        # 将 eos_token 注册为特殊 token
         tokenizer.add_special_tokens({"eos_token": tokenizer.eos_token})
-
         if is_main_process:
             logger.info(f"Add eos_token: {tokenizer.eos_token}")
 
-    # =========================
-    # 处理 BOS token
-    # =========================
-    # bos_token 用于标识序列开始
-    # 一些 Causal LM（如 LLaMA 系）可能没有显式 bos_token
+    # 处理 BOS token - 用于标识序列开始
     if tokenizer.bos_token_id is None:
-        # 这里直接复用 eos_token 作为 bos_token
-        # 这是一个常见的工程兜底方案，避免 embedding 越界或空值
         tokenizer.add_special_tokens({"bos_token": tokenizer.eos_token})
         tokenizer.bos_token_id = tokenizer.eos_token_id
-
         if is_main_process:
             logger.info(f"Add bos_token: {tokenizer.bos_token}")
 
-    # =========================
-    # 处理 PAD token
-    # =========================
-    # pad_token 用于 batch padding
-    # 在以下场景必不可少：
-    # - DataCollatorWithPadding
-    # - PPO / GRPO 中的对齐 padding
-    # - attention_mask 正确构建
+    # 处理 PAD token - 用于 batch padding
     if tokenizer.pad_token_id is None:
-        # 优先使用 unk_token，其次使用 eos_token 兜底
         tokenizer.pad_token = tokenizer.unk_token or tokenizer.eos_token
-
         if is_main_process:
             logger.info(f"Add pad_token: {tokenizer.pad_token}")
 
-    # 返回已经规范化的 tokenizer
     return tokenizer
 
 
@@ -385,30 +428,59 @@ def load_and_prepare_tokenizer(training_args, model_args, is_main_process):
 # =========================
 
 def load_models(training_args, model_args):
+    """
+    加载PPO训练所需的所有模型。
+
+    Args:
+        training_args: 训练参数，包含模型路径
+        model_args: 模型配置参数
+
+    Returns:
+        tuple: (policy, ref_policy, reward_model, value_model, peft_config)
+    """
+    import torch
+
+    # 使用 torch_dtype 映射
+    dtype_map = {
+        "bfloat16": torch.bfloat16,
+        "float16": torch.float16,
+        "float32": torch.float32,
+    }
+    torch_dtype = dtype_map.get(model_args.dtype, torch.float32)
+
+    # 加载价值模型
     value_model = AutoModelForSequenceClassification.from_pretrained(
         training_args.reward_model_path,
         trust_remote_code=model_args.trust_remote_code,
         num_labels=1,
+        dtype=torch_dtype,
     )
 
+    # 加载奖励模型
     reward_model = AutoModelForSequenceClassification.from_pretrained(
         training_args.reward_model_path,
         trust_remote_code=model_args.trust_remote_code,
         num_labels=1,
+        dtype=torch_dtype,
     )
 
+    # 加载策略模型
     policy = AutoModelForCausalLM.from_pretrained(
         training_args.sft_model_path,
         trust_remote_code=model_args.trust_remote_code,
+        dtype=torch_dtype,
     )
 
+    # 获取PEFT配置
     peft_config = get_peft_config(model_args)
 
+    # 如果不使用PEFT，则需要加载参考策略模型
     ref_policy = None
     if peft_config is None:
         ref_policy = AutoModelForCausalLM.from_pretrained(
             training_args.sft_model_path,
             trust_remote_code=model_args.trust_remote_code,
+            dtype=torch_dtype,
         )
 
     return policy, ref_policy, reward_model, value_model, peft_config
@@ -429,6 +501,18 @@ def load_models(training_args, model_args):
 # =========================
 
 def load_and_prepare_datasets(args, training_args, tokenizer, is_main_process):
+    """
+    加载并准备训练和评估数据集。
+
+    Args:
+        args: PPOArguments参数
+        training_args: 训练参数
+        tokenizer: 分词器
+        is_main_process: 是否为主进程
+
+    Returns:
+        tuple: (train_dataset, eval_dataset)
+    """
     raw_datasets = load_raw_datasets(args)
     train_dataset = raw_datasets["train"]
     eval_dataset = raw_datasets["validation"]
@@ -460,9 +544,20 @@ def load_and_prepare_datasets(args, training_args, tokenizer, is_main_process):
     return train_dataset, eval_dataset
 
 
-def tokenize_and_filter(
-        dataset, preprocess_fn, training_args, is_main_process, name
-):
+def tokenize_and_filter(dataset, preprocess_fn, training_args, is_main_process, name):
+    """
+    对数据集进行分词和过滤。
+
+    Args:
+        dataset: 原始数据集
+        preprocess_fn: 预处理函数
+        training_args: 训练参数
+        is_main_process: 是否为主进程
+        name: 数据集名称（用于日志）
+
+    Returns:
+        Dataset: 分词并过滤后的数据集
+    """
     if not is_main_process:
         return dataset
 
@@ -500,46 +595,23 @@ def tokenize_and_filter(
 # =========================
 
 def build_preprocess_function(tokenizer, prompt_template, max_source_length):
+    """
+    构建数据预处理函数。
+
+    Args:
+        tokenizer: 分词器
+        prompt_template: prompt模板
+        max_source_length: 最大源长度（预留参数，用于未来扩展）
+
+    Returns:
+        function: 预处理函数
+    """
+    # max_source_length 参数预留用于未来扩展
+    _ = max_source_length
     roles = ["human", "gpt"]
 
     def preprocess_function(examples):
-        """
-        预处理函数：将对话数据转换为模型输入格式
-        
-        该函数将多轮对话数据按照指定的prompt模板进行格式化，然后进行分词处理，
-        最终生成适合PPO训练的input_ids序列。
-        
-        Args:
-            examples (dict): 包含以下键的字典：
-                - "conversations": 对话列表，每个对话包含多个消息对象
-                - "system_prompt" (可选): 系统提示词列表
-        
-        Returns:
-            dict: 包含 "input_ids" 键的字典，值为分词后的token序列列表
-        
-        输入样例:
-            examples = {
-                "conversations": [
-                    [
-                        {"from": "human", "value": "轻度白内障的临床表现有些什么？"},
-                        {"from": "gpt", "value": "轻度白内障伴玻璃体混浊"}
-                    ],
-                    [
-                        {"from": "human", "value": "如何预防近视？"},
-                        {"from": "gpt", "value": "预防近视需要注意用眼卫生..."}
-                    ]
-                ],
-                "system_prompt": ["你是一个专业的医疗助手", ""]
-            }
-        
-        输出样例:
-            {
-                "input_ids": [
-                    [151644, 8948, 198, 2610, 525, 264, 10950, 17847, 13, 151645, 198, 151644, 872, 198, 9238, 42805, 7423, 350, 458, 19398, 13, 151645],  # 第一个对话的prompt
-                    [151644, 8948, 198, 2610, 525, 264, 10950, 17847, 13, 151645, 198, 151644, 872, 198, 5348, 6263, 12046, 7921, 13, 151645]   # 第二个对话的prompt
-                ]
-            }
-        """
+        """将对话数据转换为模型输入格式"""
         new_examples = {"input_ids": []}
         system_prompts = examples.get("system_prompt", "")
 
@@ -567,25 +639,7 @@ def build_preprocess_function(tokenizer, prompt_template, max_source_length):
                 system_prompts[i] if system_prompts else None
             )
 
-            '''
-            prompt_template样例：
-                Conversation(
-                    name="qwen",
-                    system_prompt="<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n",
-                    messages=[],
-                    roles=("user", "assistant"),
-                    prompt="<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n",
-                    sep="\n",
-                    stop_str="<|im_end|>",
-                )
-            dialog样例：
-                [
-                    "<|im_start|>system\n你是一个有帮助的助手<|im_end|>\n<|im_start|>user\n你好<|im_end|>\n<|im_start|>assistant\n",
-                    "你好！很高兴为您服务",
-                    "\n<|im_start|>user\n今天天气怎么样<|im_end|>\n<|im_start|>assistant\n",
-                    "今天天气很好"
-                ]
-            '''
+            # 使用prompt模板构建对话
             dialog = prompt_template.get_dialog(
                 history, system_prompt=system_prompt
             )
@@ -618,7 +672,24 @@ def build_trainer(
         eval_dataset,
         peft_config,
 ):
-    return PPOTrainer(
+    """
+    构建PPO训练器，整合所有必要的组件。
+
+    Args:
+        training_args: 训练参数配置
+        tokenizer: 分词器
+        policy: 策略模型
+        ref_policy: 参考策略模型
+        reward_model: 奖励模型
+        value_model: 价值模型
+        train_dataset: 训练数据集
+        eval_dataset: 评估数据集
+        peft_config: PEFT配置
+
+    Returns:
+        PPOTrainer: 配置好的PPO训练器
+    """
+    trainer = PPOTrainer(
         args=training_args,
         processing_class=tokenizer,
         model=policy,
@@ -630,14 +701,22 @@ def build_trainer(
         peft_config=peft_config,
     )
 
+    return trainer
+
 
 # =========================
 # Run
 # =========================
 
-def run_training_and_inference(
-        trainer, training_args, is_main_process
-):
+def run_training_and_inference(trainer, training_args, is_main_process):
+    """
+    执行训练过程并进行推理生成。
+
+    Args:
+        trainer: PPO训练器
+        training_args: 训练参数
+        is_main_process: 是否为主进程
+    """
     if training_args.do_train:
         if is_main_process:
             logger.info("*** Train ***")
