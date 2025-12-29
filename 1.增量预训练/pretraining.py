@@ -798,19 +798,30 @@ def load_model_and_tokenizer(model_args):
             )
 
     # 在Windows+WSL2环境下，避免使用自动设备映射
-    if torch.cuda.is_available():
-        device_map = {"": 0}  # 手动指定使用第一个GPU
+    # DeepSpeed Zero-3 不兼容 device_map，需要特殊处理
+    if is_deepspeed_zero3_enabled():
+        device_map = None
     else:
-        device_map = "cpu"
+        if torch.cuda.is_available():
+            device_map = {"": 0}  # 手动指定使用第一个GPU
+        else:
+            device_map = "cpu"
 
     # 加载因果语言模型
+    model_kwargs = {
+        "config": config,
+        "dtype": dtype,
+        "low_cpu_mem_usage": (not is_deepspeed_zero3_enabled()),
+        **config_kwargs,
+    }
+    
+    # 只有在非 DeepSpeed Zero-3 模式下才添加 device_map
+    if device_map is not None:
+        model_kwargs["device_map"] = device_map
+    
     model = AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
-        config=config,
-        dtype=dtype,
-        low_cpu_mem_usage=(not is_deepspeed_zero3_enabled()),
-        device_map=device_map,
-        **config_kwargs,
+        **model_kwargs,
     )
 
     return model, tokenizer, block_size
