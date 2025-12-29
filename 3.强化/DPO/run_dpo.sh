@@ -8,7 +8,7 @@
 
 CUDA_VISIBLE_DEVICES=0 python dpo_training.py \
     --model_name_or_path ../../model/Qwen/Qwen3-0.6B \
-    --tokenizer_name_or_path ../output/tokenizers_merge \
+    --tokenizer_name_or_path ../../output/tokenizers_merge \
     --template_name qwen \
     --train_file_dir ../../data/reward \
     --validation_file_dir ../../data/reward \
@@ -18,7 +18,7 @@ CUDA_VISIBLE_DEVICES=0 python dpo_training.py \
     --do_train \
     --do_eval \
     --use_peft True \
-    --max_train_samples 1000 \
+    --max_train_samples 100 \
     --max_eval_samples 10 \
     --max_steps 100 \
     --eval_steps 20 \

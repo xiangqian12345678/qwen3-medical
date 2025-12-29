@@ -589,15 +589,19 @@ def load_from_hf_hub(args) -> Optional[DatasetDict]:
     若未配置或加载失败，返回 None
     """
     dataset_names = parse_comma_list(args.dataset_name)
-    dataset_configs = [
-        None if (c := config.strip()) in ("", "None", "none") else c
-        for config in data_args.dataset_config_name.split(',')
-    ]
+    
+    # 如果没有指定数据集名称，直接返回 None
     if not dataset_names:
         return None
-
-    if dataset_configs is None:
+        
+    # 处理 dataset_config_name 可能为 None 的情况
+    if args.dataset_config_name is None:
         dataset_configs = [None] * len(dataset_names)
+    else:
+        dataset_configs = [
+            None if (c := config.strip()) in ("", "None", "none") else c
+            for config in args.dataset_config_name.split(',')
+        ]
 
     if len(dataset_names) != len(dataset_configs):
         raise ValueError(
