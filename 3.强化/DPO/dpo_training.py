@@ -127,6 +127,8 @@ class TrainingArguments:
     lr_scheduler_type: Optional[str] = field(default="cosine", metadata={"help": "学习率调度类型，如cosine。"})
     warmup_steps: Optional[int] = field(default=100, metadata={"help": "预热步数。"})
     weight_decay: Optional[float] = field(default=0.05, metadata={"help": "权重衰减系数。"})
+    adam_beta1: Optional[float] = field(default=0.9, metadata={"help": "Adam优化器的beta1参数。"})
+    adam_beta2: Optional[float] = field(default=0.95, metadata={"help": "Adam优化器的beta2参数。"})
     optim: Optional[str] = field(default="adamw_torch", metadata={"help": "优化器类型。"})
     fp16: Optional[bool] = field(default=True, metadata={"help": "是否使用FP16训练。"})
     bf16: Optional[bool] = field(default=False, metadata={"help": "是否使用BF16训练。"})
@@ -147,6 +149,8 @@ class TrainingArguments:
         metadata={"help": "如果使用datasets.Dataset，是否移除未使用的列。"},
     )
     report_to: Optional[str] = field(default="tensorboard", metadata={"help": "日志上报平台，如wandb或tensorboard。"})
+    deepspeed: Optional[str] = field(default=None, metadata={"help": "DeepSpeed配置文件路径。"})
+    local_rank: int = field(default=-1, metadata={"help": "本地进程排名，用于分布式训练。"})
 
 
 @dataclass
@@ -313,6 +317,14 @@ class ScriptArguments:
         return self.training_args.weight_decay
     
     @property
+    def adam_beta1(self):
+        return self.training_args.adam_beta1
+    
+    @property
+    def adam_beta2(self):
+        return self.training_args.adam_beta2
+    
+    @property
     def optim(self):
         return self.training_args.optim
     
@@ -363,6 +375,14 @@ class ScriptArguments:
     @property
     def report_to(self):
         return self.training_args.report_to
+    
+    @property
+    def deepspeed(self):
+        return self.training_args.deepspeed
+    
+    @property
+    def local_rank(self):
+        return self.training_args.local_rank
 
 
 def print_trainable_parameters(model):
@@ -833,6 +853,7 @@ def load_model(args):
     """
     加载模型并处理：
     - DDP device_map
+    - DeepSpeed集成
     - QLoRA / 4bit / 8bit
     - FP16 梯度稳定性问题
     - Gradient Checkpointing
@@ -843,9 +864,18 @@ def load_model(args):
     Returns:
         model (AutoModelForCausalLM)
     """
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
-    if world_size > 1:
-        args.device_map = {"": int(os.environ.get("LOCAL_RANK", 0))}
+    # DeepSpeed集成
+    if args.deepspeed is not None:
+        # DeepSpeed模式下不设置device_map，让DeepSpeed处理
+        device_map = None
+        logger.info("使用DeepSpeed分布式训练，device_map设为None")
+    else:
+        # 单卡或多卡DDP模式
+        world_size = int(os.environ.get("WORLD_SIZE", "1"))
+        if world_size > 1:
+            device_map = {"": int(os.environ.get("LOCAL_RANK", 0))}
+        else:
+            device_map = args.device_map
 
     dtype = (
         args.dtype
@@ -875,7 +905,7 @@ def load_model(args):
         args.model_name_or_path,
         config=config,
         dtype=dtype,
-        device_map=args.device_map,
+        device_map=device_map,
         trust_remote_code=args.trust_remote_code,
         low_cpu_mem_usage=True,
         quantization_config=quant_config,
@@ -910,6 +940,7 @@ def build_dpo_trainer(args, model, tokenizer, train_dataset, eval_dataset):
     - DPOConfig
     - 可选 LoRA / PEFT
     - reference model 处理
+    - DeepSpeed集成
 
     Args:
         args: 训练参数
@@ -920,6 +951,14 @@ def build_dpo_trainer(args, model, tokenizer, train_dataset, eval_dataset):
     Returns:
         trainer (DPOTrainer)
     """
+    # DeepSpeed集成
+    deepspeed_config = None
+    if args.deepspeed is not None:
+        import json
+        with open(args.deepspeed, 'r') as f:
+            deepspeed_config = json.load(f)
+        logger.info(f"加载DeepSpeed配置: {args.deepspeed}")
+
     training_args = DPOConfig(
         # =========================
         # 序列长度相关
@@ -971,6 +1010,15 @@ def build_dpo_trainer(args, model, tokenizer, train_dataset, eval_dataset):
         # 使用的优化器类型
         # 常见：adamw_torch / adamw_bnb_8bit（QLoRA）
         optim=args.optim,
+
+        # 权重衰减系数
+        # 必须与DeepSpeed配置保持一致
+        weight_decay=args.weight_decay,
+
+        # Adam优化器的beta参数
+        # 必须与DeepSpeed配置保持一致 [0.9, 0.95]
+        adam_beta1=args.adam_beta1,
+        adam_beta2=args.adam_beta2,
 
 
         # =========================
@@ -1029,6 +1077,19 @@ def build_dpo_trainer(args, model, tokenizer, train_dataset, eval_dataset):
         # 禁用 wandb / swanlab / tensorboard 等自动上报
         # 避免在内网或无权限环境中出现超时或阻塞
         report_to=None,
+
+        # =========================
+        # 分布式训练相关
+        # =========================
+        # 本地进程排名，用于分布式训练
+        local_rank=args.local_rank,
+
+        # DeepSpeed配置文件路径
+        deepspeed=args.deepspeed,
+
+        # 是否在分布式训练中仅保存主节点模型
+        ddp_find_unused_parameters=False,
+        ddp_backend="nccl",
     )
 
     peft_config = None
