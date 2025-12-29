@@ -528,6 +528,14 @@ def setup_device_map(training_args, model_kwargs):
     ddp = world_size != 1
     num_gpus = torch.cuda.device_count()
 
+    # DeepSpeed Zero-3 不兼容 device_map，需要检查是否启用
+    if is_deepspeed_zero3_enabled():
+        # DeepSpeed Zero-3 时不设置 device_map，让 DeepSpeed 自动管理
+        is_main_process = (int(os.environ.get("RANK", "0")) == 0)
+        if is_main_process:
+            logger.info("DeepSpeed Zero-3 detected, skipping device_map setup")
+        return num_gpus
+
     if ddp:
         device_map = {"": int(os.environ.get("LOCAL_RANK", "0"))}
         model_kwargs["device_map"] = device_map
@@ -685,6 +693,9 @@ def run_training(trainer, training_args, train_dataset, is_main_process):
     """Execute training and handle checkpoint resumption."""
     # Training
     last_checkpoint = get_checkpoint(training_args)
+    # 禁用检查点恢复以避免DeepSpeed ZeRO-3兼容性问题
+    last_checkpoint = None
+    
     if last_checkpoint is not None and training_args.resume_from_checkpoint is None:
         if is_main_process:
             logger.info(f"Checkpoint detected, resuming training at {last_checkpoint}.")

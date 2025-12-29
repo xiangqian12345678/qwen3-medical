@@ -4,7 +4,7 @@
 # 针对32k长文本的配置
 CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node 1 grpo_training.py \
     --model_name_or_path ../../model/Qwen/Qwen3-0.6B \
-    --tokenizer_name_or_path ../output/tokenizers_merge \
+    --tokenizer_name_or_path ../../output/tokenizers_merge \
     --train_file_dir ../../data/grpo \
     --train_samples -1 \
     --max_steps -1 --num_train_epochs 1 \
