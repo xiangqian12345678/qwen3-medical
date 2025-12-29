@@ -292,9 +292,12 @@ def print_trainable_parameters(model):
         all_param += param.numel()
         if param.requires_grad:
             trainable_params += param.numel()
-    print(
-        f"trainable params: {trainable_params} || all params: {all_param} || trainable%: {100 * trainable_params / all_param}"
-    )
+    if all_param > 0:
+        print(
+            f"trainable params: {trainable_params} || all params: {all_param} || trainable%: {100 * trainable_params / all_param:.2f}"
+        )
+    else:
+        print("No parameters found in the model (possibly using DeepSpeed ZeRO optimization)")
 
 from datasets import load_dataset, concatenate_datasets, Dataset
 import os
@@ -1031,10 +1034,13 @@ def display_model_info(model):
             total_params += param.numel()
 
         logger.info("📈 参数设备分布:")
-        for device, info in device_params.items():
-            param_size_gb = info['size'] * 4 / 1024 ** 3
-            percentage = info['size'] / total_params * 100
-            logger.info(f"  {device}: {info['count']} 个参数组, {param_size_gb:.2f}GB ({percentage:.1f}%)")
+        if total_params > 0:
+            for device, info in device_params.items():
+                param_size_gb = info['size'] * 4 / 1024 ** 3
+                percentage = info['size'] / total_params * 100
+                logger.info(f"  {device}: {info['count']} 个参数组, {param_size_gb:.2f}GB ({percentage:.1f}%)")
+        else:
+            logger.info("  未检测到模型参数（可能使用了DeepSpeed ZeRO等优化技术）")
 
     if torch.cuda.is_available():
         logger.info("💾 GPU内存使用情况:")

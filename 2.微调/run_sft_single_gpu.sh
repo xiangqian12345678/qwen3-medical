@@ -14,7 +14,7 @@ python sft.py \
     --do_eval \
     --template_name qwen \
     --use_peft True \
-    --max_train_samples 1000 \
+    --max_train_samples 100 \
     --max_eval_samples 10 \
     --model_max_length 2048 \
     --num_train_epochs 1 \

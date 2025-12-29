@@ -10,7 +10,7 @@ accelerate launch --num_processes=2 sft_accelerate.py \
     --do_eval \
     --template_name qwen \
     --use_peft True \
-    --max_train_samples 1000 \
+    --max_train_samples 100 \
     --max_eval_samples 10 \
     --model_max_length 2048 \
     --num_train_epochs 1 \
@@ -34,7 +34,7 @@ accelerate launch --num_processes=2 sft_accelerate.py \
     --lora_rank 8 \
     --lora_alpha 16 \
     --lora_dropout 0.05 \
-    --torch_dtype bfloat16 \
+    --dtype bfloat16 \
     --bf16 \
     --device_map auto \
     --report_to tensorboard \

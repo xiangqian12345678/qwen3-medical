@@ -291,9 +291,12 @@ def print_trainable_parameters(model):
         all_param += param.numel()
         if param.requires_grad:
             trainable_params += param.numel()
-    print(
-        f"trainable params: {trainable_params} || all params: {all_param} || trainable%: {100 * trainable_params / all_param}"
-    )
+    if all_param > 0:
+        print(
+            f"trainable params: {trainable_params} || all params: {all_param} || trainable%: {100 * trainable_params / all_param:.2f}"
+        )
+    else:
+        print("No parameters found in the model (possibly using DeepSpeed ZeRO optimization)")
 
 
 def find_all_linear_names(peft_model, int4=False, int8=False):
@@ -1045,7 +1048,7 @@ def setup_quantization_config(model_args, script_args, dtype, training_args):
     return quantization_config, load_in_4bit, load_in_8bit
 
 
-def setup_model_kwargs(model_args, config, config_kwargs, dtype, quantization_config):
+def setup_model_kwargs(model_args, config, config_kwargs, dtype, quantization_config, training_args=None):
     """设置模型加载参数
 
     Args:
@@ -1058,21 +1061,34 @@ def setup_model_kwargs(model_args, config, config_kwargs, dtype, quantization_co
     Returns:
         dict: 包含所有模型加载参数的字典
     """
-    # 基础模型参数配置
+    # 获取可用GPU数量
+    num_gpus = torch.cuda.device_count()
+
+    # 基础模型参数配置（不包含device_map，稍后设置）
     model_kwargs = {
         "config": config,  # 模型配置对象
         "dtype": dtype,  # 指定模型的数据类型，影响精度和内存使用
         "trust_remote_code": model_args.trust_remote_code,  # 是否信任远程代码（用于加载自定义模型）
         "quantization_config": quantization_config,  # 量化配置，用于减少内存占用
         "low_cpu_mem_usage": True,  # 启用低CPU内存使用模式
-        "device_map": model_args.device_map,  # 设备映射策略（如'auto', 'cpu'等）
     }
 
-    # 获取可用GPU数量
-    num_gpus = torch.cuda.device_count()
+    # 检查是否使用DeepSpeed ZeRO-3
+    using_deepspeed_zero3 = False
+    if training_args and training_args.deepspeed is not None:
+        # 导入并检查DeepSpeed配置
+        try:
+            from transformers.integrations import is_deepspeed_zero3_enabled
+            using_deepspeed_zero3 = is_deepspeed_zero3_enabled()
+        except ImportError:
+            pass
 
-    # 如果设备映射设置为'auto'且有多个GPU
-    if model_args.device_map == 'auto':
+    # 设置设备映射策略
+    if using_deepspeed_zero3:
+        # DeepSpeed ZeRO-3不支持device_map，由DeepSpeed自动管理
+        logger.info("🔧 检测到DeepSpeed ZeRO-3，将让DeepSpeed自动管理设备映射")
+        model_kwargs["device_map"] = None
+    elif model_args.device_map == 'auto':
         if num_gpus > 1:
             # 保持自动设备映射
             model_kwargs["device_map"] = "auto"
@@ -1092,6 +1108,12 @@ def setup_model_kwargs(model_args, config, config_kwargs, dtype, quantization_co
 
             # 将最大内存配置添加到模型参数中
             model_kwargs["max_memory"] = max_memory
+        else:
+            # 单GPU情况，不设置device_map让其自动使用GPU:0
+            model_kwargs["device_map"] = None
+    else:
+        # 使用用户指定的device_map
+        model_kwargs["device_map"] = model_args.device_map
 
     return model_kwargs
 
@@ -1132,11 +1154,14 @@ def log_model_info(model):
             total_params += param.numel()
 
         logger.info("📈 参数设备分布:")
-        for device, info in device_params.items():
-            # 计算参数大小（假设float32，每个参数4字节）
-            param_size_gb = info['size'] * 4 / 1024 ** 3
-            percentage = info['size'] / total_params * 100
-            logger.info(f"  {device}: {info['count']} 个参数组, {param_size_gb:.2f}GB ({percentage:.1f}%)")
+        if total_params > 0:
+            for device, info in device_params.items():
+                # 计算参数大小（假设float32，每个参数4字节）
+                param_size_gb = info['size'] * 4 / 1024 ** 3
+                percentage = info['size'] / total_params * 100
+                logger.info(f"  {device}: {info['count']} 个参数组, {param_size_gb:.2f}GB ({percentage:.1f}%)")
+        else:
+            logger.info("  未检测到模型参数（可能使用了DeepSpeed ZeRO等优化技术）")
 
     # 如果CUDA可用，显示GPU内存使用情况
     if torch.cuda.is_available():
@@ -1567,7 +1592,7 @@ def main():
             = setup_quantization_config(model_args, script_args, dtype, training_args)
 
         # 设置模型加载参数
-        model_kwargs = setup_model_kwargs(model_args, config, config_kwargs, dtype, quantization_config)
+        model_kwargs = setup_model_kwargs(model_args, config, config_kwargs, dtype, quantization_config, training_args)
 
         # 14. 处理分布式训练设置
         world_size = int(os.environ.get("WORLD_SIZE", "1"))
