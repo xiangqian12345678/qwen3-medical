@@ -153,6 +153,11 @@ class TrainingArguments:
         metadata={"help": "Remove unused columns from the dataset if `datasets.Dataset` is used"},
     )
     report_to: Optional[str] = field(default="tensorboard", metadata={"help": "Report to wandb or tensorboard"})
+    deepspeed: Optional[str] = field(default=None, metadata={"help": "Enable deepspeed and pass the path to deepspeed config file"})
+    ddp_timeout: Optional[int] = field(default=1800, metadata={"help": "Timeout for distributed training"})
+    ddp_find_unused_parameters: Optional[bool] = field(default=False, metadata={"help": "Find unused parameters in DDP"})
+    logging_first_step: Optional[bool] = field(default=False, metadata={"help": "Log the first step"})
+    dataloader_num_workers: Optional[int] = field(default=0, metadata={"help": "Number of subprocesses to use for data loading"})
 
 
 @dataclass
@@ -525,7 +530,7 @@ def load_model(args, local_rank, is_main_process):
     # args.dtype 可以是:
     # - "auto" / None：交给 transformers 自动处理
     # - "float16" / "bfloat16" / "float32"
-    torch_dtype = (
+    dtype = (
         args.dtype
         if args.dtype in ["auto", None]
         else getattr(torch, args.dtype)
@@ -569,7 +574,7 @@ def load_model(args, local_rank, is_main_process):
     config = AutoConfig.from_pretrained(
         args.model_name_or_path,
         trust_remote_code=args.trust_remote_code,
-        torch_dtype=torch_dtype,
+        dtype=dtype,
         cache_dir=args.cache_dir
     )
 
@@ -589,7 +594,7 @@ def load_model(args, local_rank, is_main_process):
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name_or_path,
         config=config,
-        torch_dtype=torch_dtype,
+        dtype=dtype,
 
         # ZeRO-3 下不能启用 low_cpu_mem_usage
         low_cpu_mem_usage=(not is_deepspeed_zero3_enabled()),
@@ -603,7 +608,7 @@ def load_model(args, local_rank, is_main_process):
             load_in_8bit=args.load_in_8bit,
             bnb_4bit_use_double_quant=True,  # 二次量化，进一步省显存
             bnb_4bit_quant_type="nf4",  # NF4：QLoRA 标配
-            bnb_4bit_compute_dtype=torch_dtype,
+            bnb_4bit_compute_dtype=dtype,
         ) if args.qlora else None,
     )
 

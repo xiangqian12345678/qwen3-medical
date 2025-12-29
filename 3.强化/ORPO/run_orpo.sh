@@ -1,6 +1,6 @@
 CUDA_VISIBLE_DEVICES=0,1 python orpo_training.py \
     --model_name_or_path ../../model/Qwen/Qwen3-0.6B \
-    --tokenizer_name_or_path ../output/tokenizers_merge \
+    --tokenizer_name_or_path ../../output/tokenizers_merge \
     --template_name qwen \
     --train_file_dir ../../data/reward \
     --per_device_train_batch_size 2 \
