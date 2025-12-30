@@ -2,8 +2,8 @@
 
 ## 1.快捷单机测试
 
-    本地数据            run_single_node_single_gpu.sh
-    开源数据+本地数据     run_single_node_single_gpu2.sh
+    本地数据            run_pretrain.sh
+    开源数据+本地数据     run_pretrain2.sh
 
 ## 2.分布式训练
 
