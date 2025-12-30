@@ -19,6 +19,7 @@ export NPROC_PER_NODE=${NPROC_PER_NODE:-"4"}
 
 # ======== 训练参数 ========
 MODEL_PATH="../model/Qwen/Qwen3-0.6B"
+TOKENIZERS_PATH="../output/tokenizers_merge"
 TRAIN_FILE_DIR="../data/pretrain"
 VALIDATION_FILE_DIR="../data/pretrain"
 OUTPUT_DIR="../output/pretrain"
@@ -33,6 +34,7 @@ torchrun \
     --master_port=$MASTER_PORT \
     pretraining.py \
     --model_name_or_path $MODEL_PATH \
+    --tokenizer_name_or_path $TOKENIZERS_PATH \
     --train_file_dir $TRAIN_FILE_DIR \
     --validation_file_dir $VALIDATION_FILE_DIR \
     --per_device_train_batch_size 1 \

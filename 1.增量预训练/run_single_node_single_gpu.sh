@@ -6,6 +6,7 @@
 
 CUDA_VISIBLE_DEVICES=0 python pretraining.py \
     --model_name_or_path ../model/Qwen/Qwen3-0.6B \
+    --tokenizer_name_or_path ../output/tokenizers_merge \
     --train_file_dir ../data/pretrain \
     --validation_file_dir ../data/pretrain \
     --per_device_train_batch_size 2 \
