@@ -7,11 +7,3 @@
         --dataset_name wikitext,Linly-AI/Chinese-pretraining-dataset \
         --dataset_config_name wikitext-2-raw-v1,none \
     3.注意数据集合的格式要满足要求，待规范补充
-
-# 强化学习说明
-
-    Zero3支持：    ORPO，DPO，RM
-    Zero3不支持：  GRPO，PPO
-    Zero2支持：    GRPO，PPO，ORPO，DPO，RM
-    
-    GRPO： 理论上支持Zero3，工程上不稳定，不建议采用
