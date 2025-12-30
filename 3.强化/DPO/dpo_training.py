@@ -142,6 +142,7 @@ class TrainingArguments:
     eval_steps: Optional[int] = field(default=50, metadata={"help": "每隔多少步进行一次评估。"})
     logging_steps: Optional[int] = field(default=1, metadata={"help": "每隔多少步记录一次日志。"})
     output_dir: Optional[str] = field(default="outputs-dpo", metadata={"help": "模型输出保存目录。"})
+    overwrite_output_dir: bool = field(default=True, metadata={"help": "是否覆盖输出目录。"})
     max_steps: Optional[int] = field(default=200, metadata={"help": "训练总步数。"})
     eval_strategy: Optional[str] = field(default="steps", metadata={"help": "评估策略，如按步数或按epoch。"})
     remove_unused_columns: Optional[bool] = field(
@@ -359,7 +360,11 @@ class ScriptArguments:
     @property
     def output_dir(self):
         return self.training_args.output_dir
-    
+
+    @property
+    def overwrite_output_dir(self):
+        return self.training_args.overwrite_output_dir
+
     @property
     def max_steps(self):
         return self.training_args.max_steps
