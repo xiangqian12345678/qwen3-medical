@@ -1,7 +1,7 @@
 # reward model 训练暂不支持 torchrun 多卡训练
 CUDA_VISIBLE_DEVICES=0,1 python reward_modeling.py \
     --model_name_or_path ../../model/Qwen/Qwen3-0.6B \
-    --tokenizer_name_or_path ../output/tokenizers_merge \
+    --tokenizer_name_or_path ../../model/Qwen/Qwen3-0.6B \
     --train_file_dir ../../data/reward \
     --validation_file_dir ../../data/reward \
     --per_device_train_batch_size 4 \
