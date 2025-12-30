@@ -400,7 +400,7 @@ ZeRO-2 推荐优化组合：
 
 工作要求：
 1. 根据参考脚本，整理当前脚本
-2. 生成当前脚本的文档，写入到文本文件中
+2. 生成当前脚本的文档，写入到文本中
 3. 命令格式要对齐
     bash torchrun_multi_node_multi_gpu.sh \
         [zero_stage] [num_nodes] [gpus_per_node] [master_addr] [master_port]
