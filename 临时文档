@@ -404,3 +404,5 @@ ZeRO-2 推荐优化组合：
 3. 命令格式要对齐
     bash torchrun_multi_node_multi_gpu.sh \
         [zero_stage] [num_nodes] [gpus_per_node] [master_addr] [master_port]
+4.不要自动生成ZERO_STAGE
+    直接配置加载本地的zero1.json zero2.json zero3.json
