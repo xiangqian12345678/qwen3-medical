@@ -659,9 +659,20 @@ def load_model_and_tokenizer(model_args, script_args):
         if model_args.dtype in ["auto", None]
         else getattr(torch, model_args.dtype)
     )
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
-    if world_size > 1:
-        model_args.device_map = {"": int(os.environ.get("LOCAL_RANK", "0"))}
+
+    # DeepSpeed 模式下检查是否传递了 deepspeed 参数
+    import sys
+    use_deepspeed = "--deepspeed" in sys.argv
+
+    if use_deepspeed:
+        # DeepSpeed 模式下不使用 device_map，由 DeepSpeed 自动管理设备分配
+        device_map_arg = None
+    else:
+        # 非 DeepSpeed 模式下使用 device_map
+        world_size = int(os.environ.get("WORLD_SIZE", "1"))
+        if world_size > 1:
+            model_args.device_map = {"": int(os.environ.get("LOCAL_RANK", "0"))}
+        device_map_arg = model_args.device_map
 
     config = AutoConfig.from_pretrained(
         model_args.model_name_or_path,
@@ -670,14 +681,22 @@ def load_model_and_tokenizer(model_args, script_args):
         trust_remote_code=model_args.trust_remote_code,
         cache_dir=model_args.cache_dir
     )
+
+    # 构建模型加载参数
+    model_kwargs = {
+        "config": config,
+        "dtype": dtype,
+        "load_in_4bit": model_args.load_in_4bit,
+        "load_in_8bit": model_args.load_in_8bit,
+        "trust_remote_code": model_args.trust_remote_code,
+    }
+    # 仅在非 DeepSpeed 模式下添加 device_map 参数
+    if device_map_arg is not None:
+        model_kwargs["device_map"] = device_map_arg
+
     model = AutoModelForSequenceClassification.from_pretrained(
         model_args.model_name_or_path,
-        config=config,
-        dtype=dtype,
-        load_in_4bit=model_args.load_in_4bit,
-        load_in_8bit=model_args.load_in_8bit,
-        device_map=model_args.device_map,
-        trust_remote_code=model_args.trust_remote_code,
+        **model_kwargs
     )
 
     # Load tokenizer
