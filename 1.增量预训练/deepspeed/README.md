@@ -19,19 +19,19 @@ bash deepspeed_muti_node_muti_gpu.sh [zero_stage] [num_nodes] [gpus_per_node] [m
 单节点多 GPU：
 
 ```bash
-bash deepspeed_muti_node_muti_gpu.sh 3 1 4 localhost 29501
+bash deepspeed_multi_node_multi_gpu.sh 3 1 4 localhost 29501
 ```
 
 多节点多 GPU（2 节点，每节点 4 GPU）：
 
 ```bash
 # 节点0（主节点）
-NODE_RANK=0 bash deepspeed_muti_node_muti_gpu.sh 3 2 4 192.168.1.100 29501
+NODE_RANK=0 bash deepspeed_multi_node_multi_gpu.sh 3 2 4 192.168.1.100 29501
 ```
 
 ```bash
 # 节点1
-NODE_RANK=1 bash deepspeed_muti_node_muti_gpu.sh 3 2 4 192.168.1.100 29501
+NODE_RANK=1 bash deepspeed_multi_node_multi_gpu.sh 3 2 4 192.168.1.100 29501
 ```
 
 ## 2. 参数说明
@@ -156,3 +156,7 @@ NODE_RANK=1 bash deepspeed_muti_node_muti_gpu.sh 3 2 4 192.168.1.100 29501
     - ZeRO-3 可以显著节省显存，但可能增加通信开销
     - 脚本默认采用 bfloat16 混合精度训练，需 GPU 支持
     - 输出目录可使用 --overwrite_output_dir 覆盖已有结果
+
+## 6. 添加开源数据的版本参看
+
+    deepsped_multi_node_multi_gpu2.sh

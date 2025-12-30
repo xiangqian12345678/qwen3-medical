@@ -25,6 +25,8 @@ MODEL_PATH="../model/Qwen/Qwen3-0.6B"
 TOKENIZER_PATH="../output/tokenizers_merge"
 TRAIN_FILE_DIR="../data/pretrain"
 VALID_FILE_DIR="../data/pretrain"
+HUG_DATASET="wikitext,Linly-AI/Chinese-pretraining-dataset"
+HUG_CONFIG="wikitext-2-raw-v1,none"
 CACHE_DIR="../output/cache"
 
 OUTPUT_DIR="../output/pretrain_zero${ZERO_STAGE}"
@@ -99,6 +101,8 @@ torchrun \
   pretraining.py \
   --model_name_or_path $MODEL_PATH \
   --tokenizer_name_or_path $TOKENIZER_PATH \
+  --dataset_name "$HUG_DATASET" \
+  --dataset_config_name "$HUG_CONFIG" \
   --train_file_dir $TRAIN_FILE_DIR \
   --validation_file_dir $VALID_FILE_DIR \
   --per_device_train_batch_size $PER_DEVICE_TRAIN_BATCH_SIZE \
