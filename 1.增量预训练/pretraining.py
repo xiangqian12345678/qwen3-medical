@@ -554,7 +554,24 @@ def load_local_datasets(data_args, model_args, is_main_process):
     if extension == "text":
         dataset_args["keep_linebreaks"] = data_args.keep_linebreaks
 
-    # 加载数据集
+    # 功能: 使用Hugging Face datasets库的load_dataset函数从本地文件加载数据集
+    # 支持的文件格式: txt、json、jsonl等
+    # 输入样例:
+    #   extension = "text"
+    #   data_files = {"train": ["data/train.txt", "data/train2.txt"], "validation": ["data/eval.txt"]}
+    #   dataset_args = {"keep_linebreaks": True}
+    #   cache_dir = "./cache"
+    # 输出样例:
+    #   raw_datasets = {
+    #       "train": Dataset({
+    #           features: ['text'],
+    #           num_rows: 100000
+    #       }),
+    #       "validation": Dataset({
+    #           features: ['text'],
+    #           num_rows: 1000
+    #       })
+    #   }
     raw_datasets = load_dataset(
         extension,
         data_files=data_files,
@@ -564,6 +581,18 @@ def load_local_datasets(data_args, model_args, is_main_process):
 
     # 如果没有验证数据，将使用validation_split_percentage来分割数据集
     if "validation" not in raw_datasets.keys():
+        # 输入样例:
+        #   extension = "text"
+        #   data_files = {"train": ["data/train.txt"]}  # 假设 train.txt 有 1000 行
+        #   data_args.validation_split_percentage = 10
+        #   dataset_args = {"keep_linebreaks": True}
+        #   cache_dir = "./cache"
+        #   split = "train[:10%]"
+        # 输出样例:
+        #   raw_datasets["validation"] = Dataset({
+        #       features: ['text'],
+        #       num_rows: 100  # 前 10% 的数据
+        #   })
         raw_datasets["validation"] = load_dataset(
             extension,
             data_files=data_files,
