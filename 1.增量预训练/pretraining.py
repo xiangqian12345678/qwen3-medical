@@ -999,50 +999,118 @@ def preprocess_datasets(raw_datasets, data_args, tokenizer, block_size, training
 def setup_trainer(model, tokenizer, training_args, train_dataset, eval_dataset):
     """
     设置训练器
-    
+
     Args:
-        model: 模型
-        tokenizer: 分词器
-        training_args: 训练参数
-        train_dataset: 训练数据集
-        eval_dataset: 评估数据集
-    
+        model: PyTorch模型实例
+        tokenizer: 分词器，用于文本预处理
+        training_args: Seq2SeqTrainingArguments训练参数配置
+        train_dataset: 训练数据集，已预处理好的tokenized数据
+        eval_dataset: 评估数据集，已预处理好的tokenized数据
+
     Returns:
-        训练器和是否分布式训练标志
+        tuple: (trainer, ddp)
+            - trainer: SaveModelTrainer训练器实例
+            - ddp: 布尔值，是否使用分布式数据并行(DDP)
     """
-    # 检查分布式训练设置
+    # ========== 数据并行设置检测 ==========
+    # WORLD_SIZE是分布式训练环境变量，表示总进程数
+    # 当使用torchrun或accelerate launch启动多GPU训练时，会自动设置此环境变量
+    # 例如：torchrun --nproc_per_node=4 表示4个进程，WORLD_SIZE=4
+    # 默认值为"1"表示单进程单卡训练
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    # ddp=True表示启用分布式数据并行(DistributedDataParallel, DDP)
+    # DDP是PyTorch提供的跨多GPU的数据并行方案，每个GPU上有独立的模型副本
     ddp = world_size != 1
 
-    # 设置梯度检查点
+    # ========== 梯度检查点配置 ==========
+    # 梯度检查点是一种显存优化技术，以计算换内存
+    # 通过不保存前向传播的中间激活值来节省显存，反向传播时重新计算
     if training_args.gradient_checkpointing:
+        # 启用梯度检查点
         model.gradient_checkpointing_enable()
+        # 关闭KV cache（键值缓存），因为训练时不需要缓存
+        # cache主要用于推理阶段的加速生成
         model.config.use_cache = False
     else:
+        # 不使用梯度检查点时，启用cache以提升训练效率
         model.config.use_cache = True
+    # 确保输入张量需要梯度，这对某些特殊层（如LayerNorm）是必要的
     model.enable_input_require_grads()
 
-    # 设置多GPU并行
+    # ========== 多GPU并行配置 ==========
+    # 这一段处理单机多GPU但不使用分布式训练的场景
+    # 数据并行的核心区别：
+    #   - DDP（分布式数据并行）：使用torchrun启动，每个GPU一个进程，效率高
+    #   - DataParallel（DP）：单进程多GPU，使用PyTorch的nn.DataParallel，效率较低
     if not ddp and torch.cuda.device_count() > 1:
-        # 防止Trainer在有多于1个GPU时尝试自己的DataParallelism
+        # 条件解释：
+        #   not ddp: 没有使用torchrun等分布式启动方式
+        #   torch.cuda.device_count() > 1: 检测到多张可用GPU
+
+        # ========== 数据并行实现位置1：模型并行标记 ==========
+        # is_parallelizable: 告诉Trainer该模型可以并行化
+        # 设置为True后，Trainer会自动将模型分配到多个GPU上
         model.is_parallelizable = True
+
+        # model_parallel: 标记模型是否已设置为并行模式
+        # 这个标志会被Trainer的内部逻辑检测，触发自动的设备分配
         model.model_parallel = True
 
-    # 创建自定义训练器
+        # 注意：这里的并行实际上是让Trainer使用简单的DataParallel
+        # 但通过设置is_parallelizable=True，避免了Trainer内部的冲突检测
+        # 真正的高效数据并行应该使用DDP（world_size > 1的场景）
+
+    # ========== 创建训练器 ==========
+    # SaveModelTrainer继承自Hugging Face的Trainer类
+    # Trainer内部实现了完整的数据并行逻辑
     trainer = SaveModelTrainer(
         model=model,
-        args=training_args,
+        args=training_args,  # 训练参数（包含batch_size、learning_rate等）
+        # ========== 数据并行实现位置2：数据集分配 ==========
+        # 当使用DDP时，Trainer会自动将train_dataset分发到各个进程
+        # 每个进程只处理数据集的一个子集（shard）
+        # 例如：4卡DDP，每张卡处理1/4的数据
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_eval else None,
-        processing_class=tokenizer,
-        data_collator=fault_tolerance_data_collator,
+        processing_class=tokenizer,  # 分词器，用于数据后处理
+        data_collator=fault_tolerance_data_collator,  # 数据整理器，将样本打包成batch
+        # 评估指标计算函数
         compute_metrics=compute_metrics if training_args.do_eval else None,
+        # 预处理logits用于指标计算
         preprocess_logits_for_metrics=preprocess_logits_for_metrics
         if training_args.do_eval
         else None,
     )
 
+    # ========== 返回训练器和并行标志 ==========
+    # ddp标志告诉调用者是否使用了DDP，这在保存模型等操作时很重要
+    # 例如：DDP模式下，只有rank 0进程需要保存模型
     return trainer, ddp
+
+    # ========== 数据并行机制总结 ==========
+    # 这段代码涉及的数据并行实现方式：
+    #
+    # 1. DDP（DistributedDataParallel）- 高效并行方案：
+    #    - 触发条件: 使用torchrun/accelerate启动，设置WORLD_SIZE > 1
+    #    - 实现方式: Trainer内部自动检测并初始化DDP
+    #    - 数据分发: 训练时自动将数据集分片到各个GPU
+    #    - 梯度同步: 通过NCCL/后端自动同步各GPU的梯度
+    #    - 效率: 高，每个GPU独立的前向/反向传播
+    #
+    # 2. DataParallel - 兼容方案：
+    #    - 触发条件: 单进程多GPU（not ddp && 多张GPU）
+    #    - 实现方式: 设置is_parallelizable=True，Trainer使用DP
+    #    - 数据分发: 主进程分割batch到各GPU
+    #    - 梯度同步: 主进程收集各GPU梯度并更新
+    #    - 效率: 较低，主进程成为瓶颈
+    #
+    # 3. Trainer内部的数据并行实现：
+    #    - 训练时，Trainer调用get_train_dataloader()创建数据加载器
+    #    - DDP模式下：使用DistributedSampler对数据集进行分片
+    #    - 每个进程只能访问到自己负责的数据分片
+    #    - 自动处理batch_size的调整（per_device_batch_size）
+    #
+    # 推荐做法：使用DDP（通过torchrun或accelerate launch启动）
 
 
 def train_model(trainer, max_train_samples, training_args):

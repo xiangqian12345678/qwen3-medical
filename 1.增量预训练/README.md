@@ -2,13 +2,14 @@
 
 ## 1.快捷单机测试
 
-    本地数据            run_pretrain.sh
+    本地数据             run_pretrain.sh
     开源数据+本地数据     run_pretrain2.sh
 
 ## 2.分布式训练
 
 - 基于deepspeed命令   [使用说明](./deepspeed/README.md)
 - 基于torchrun命令    [使用说明](./torchrun/README.md)
+- 超大规模语料训练     没有验证(参考使用就好，逻辑更简单)
 
 ## 3.数据格式
 
@@ -191,4 +192,53 @@ print(all_med)
               category = [ "疾病百科", "内科", "呼吸内科" ]
         得到： 名称：肺泡蛋白质沉积症。描述：又称Rosen-Castle-man-Liebow综合征，是一种罕见疾病。该病以肺泡和细支气管腔。类别:疾病百科,内科,呼吸内科
 
+### 8.3 数据处理建议
 
+    如果时超大规模训练大模型>1T，需要对流程进行拆分： 数据处理->模型训练
+
+    1.开源数据
+        HF Dataset（已有 shard）
+                ↓
+        streaming/load
+                ↓
+        map：清洗/过滤
+                ↓
+        map：tokenize（batched）
+                ↓
+        全局 token 流
+                ↓
+        重新切 shard（按 token 数）
+                ↓
+        写训练 shard（bin/save_to_disk）
+    2.本地文件
+        原始数据（HF or 本地）
+                ↓
+        map：清洗 / 过滤
+                ↓
+        map：tokenize（batched）
+                ↓
+        全局 token 流
+                ↓
+        按 token 数重新切 shard
+                ↓
+        写训练 shard（bin/save_to_disk）
+    3.分片大小
+    3.1 单机训练  模型<=13B
+        约 5M–20M tokens
+    3.2 多机训练  模型>13B
+        50M–100M tokens/shard）
+    3.3 每台机器加载不通的数据
+        from datasets import load_dataset
+        from torch.utils.data import DataLoader, DistributedSampler
+        
+        # 假设有多个分片
+        data_files = {"train": ["shard1.jsonl", "shard2.jsonl", "shard3.jsonl", "shard4.jsonl"]}
+        
+        dataset = load_dataset("json", data_files=data_files, streaming=True)["train"]
+        
+        # DistributedSampler 会根据 rank 分配数据
+        sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
+        
+        dataloader = DataLoader(dataset, batch_size=8, sampler=sampler)
+      
+    
