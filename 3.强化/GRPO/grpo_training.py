@@ -462,7 +462,33 @@ def load_tokenizer(model_args, script_args):
 
 
 def prepare_datasets(script_args, training_args, is_main_process):
-    """Load, process and split datasets."""
+    """
+    加载、处理并划分训练数据集。
+
+    输入样例:
+        script_args: 包含以下属性的对象
+            - train_samples: int, 限制训练样本数量（0表示不限制）
+            - preprocessing_num_workers: int, 数据预处理工作进程数
+        training_args: HfTrainingArgs 对象
+            - main_process_first: 用于多进程同步的上下文管理器
+        is_main_process: bool, 是否为主进程
+
+    输出样例:
+        train_dataset: Dataset, 训练集，包含 'prompt' 和 'answer' 字段
+        test_dataset: Dataset, 测试集，包含 'prompt' 和 'answer' 字段
+
+    读取的文本是jsonl格式:
+        {"question": "肛门病变可能是什么疾病的症状?", "answer": "食管克罗恩病"}
+
+    处理后格式:
+        {
+            'prompt': [
+                {'role': 'system', 'content': SYSTEM_PROMPT},
+                {'role': 'user', 'content': '肛门病变可能是什么疾病的症状?'}
+            ],
+            'answer': '食管克罗恩病'
+        }
+    """
     # Load datasets
     raw_datasets = load_raw_datasets(script_args)
     dataset = raw_datasets["train"]
@@ -695,7 +721,7 @@ def run_training(trainer, training_args, train_dataset, is_main_process):
     last_checkpoint = get_checkpoint(training_args)
     # 禁用检查点恢复以避免DeepSpeed ZeRO-3兼容性问题
     last_checkpoint = None
-    
+
     if last_checkpoint is not None and training_args.resume_from_checkpoint is None:
         if is_main_process:
             logger.info(f"Checkpoint detected, resuming training at {last_checkpoint}.")
@@ -843,6 +869,13 @@ def grpo_train(
 
 
 def main():
+    # 答案生成相关配置说明：
+    # - num_generations: 每个prompt生成的响应数量（在run_grpo.sh中配置为4）
+    # - max_prompt_length: 输入prompt的最大token长度（16384）
+    # - max_completion_length: 生成答案的最大token长度（512）
+    # - per_device_train_batch_size: 每设备的prompt批量大小（需能被num_generations整除）
+    # 这些参数由TrlParser解析到GRPOConfig中，由GRPOTrainer内部使用
+    # GRPO算法会为每个prompt生成num_generations个响应，然后通过奖励函数比较和优化
     parser = TrlParser((ModelConfig, ScriptArguments, GRPOConfig))
     model_args, script_args, training_args = parser.parse_args_and_config()
 

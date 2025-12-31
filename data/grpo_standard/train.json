@@ -1,0 +1,92 @@
+[
+  {
+    "prompt": "肛门疼痛可能是哪些疾病的症状？",
+    "group_id": "g1",
+    "responses": [
+      {"response_id": "r1", "text": "肛门疼痛可能与痔疮、肛裂、肛周脓肿或炎症性肠病等有关。建议根据症状严重程度及时就医。", "reward": 0.95},
+      {"response_id": "r2", "text": "可能是饮食不规律引起的肛门不适。", "reward": 0.3},
+      {"response_id": "r3", "text": "这通常不需要处理，会自己好。", "reward": 0.1},
+      {"response_id": "r4", "text": "肛门疼痛一定是癌症的症状。", "reward": 0.05}
+    ]
+  },
+  {
+    "prompt": "白带增多发黄怎么回事？",
+    "group_id": "g2",
+    "responses": [
+      {"response_id": "r1", "text": "白带增多发黄可能提示阴道炎、细菌感染或宫颈炎等情况。建议去妇科检查并做分泌物检查。", "reward": 0.95},
+      {"response_id": "r2", "text": "可能是月经不调引起的暂时现象。", "reward": 0.4},
+      {"response_id": "r3", "text": "这种情况无需关注，会自然消失。", "reward": 0.1},
+      {"response_id": "r4", "text": "白带颜色变化一定意味着性病感染。", "reward": 0.05}
+    ]
+  },
+  {
+    "prompt": "发热伴咳嗽应该如何处理？",
+    "group_id": "g3",
+    "responses": [
+      {"response_id": "r1", "text": "发热伴咳嗽可能是呼吸道感染或流感。可以先多休息、补充水分，如果持续高热或呼吸困难，应及时就医。", "reward": 0.95},
+      {"response_id": "r2", "text": "多喝水就行，不必担心。", "reward": 0.3},
+      {"response_id": "r3", "text": "可以自行买抗生素服用。", "reward": 0.1},
+      {"response_id": "r4", "text": "发热咳嗽一定是新冠病毒感染。", "reward": 0.05}
+    ]
+  },
+  {
+    "prompt": "胃痛反酸怎么办？",
+    "group_id": "g4",
+    "responses": [
+      {"response_id": "r1", "text": "胃痛反酸可能是胃炎或胃食管反流。建议少食多餐、避免辛辣刺激，必要时可就医做胃镜检查。", "reward": 0.95},
+      {"response_id": "r2", "text": "多喝牛奶就能缓解。", "reward": 0.4},
+      {"response_id": "r3", "text": "胃痛不必管，随便吃东西即可。", "reward": 0.1},
+      {"response_id": "r4", "text": "胃痛反酸一定是胃癌。", "reward": 0.05}
+    ]
+  },
+  {
+    "prompt": "糖尿病患者如何控制血糖？",
+    "group_id": "g5",
+    "responses": [
+      {"response_id": "r1", "text": "糖尿病患者应注意饮食控制、定期运动，并按医嘱使用降糖药物或胰岛素，定期监测血糖。", "reward": 0.95},
+      {"response_id": "r2", "text": "只要少吃糖就行。", "reward": 0.4},
+      {"response_id": "r3", "text": "糖尿病不必控制饮食。", "reward": 0.1},
+      {"response_id": "r4", "text": "多吃水果就可以控制血糖。", "reward": 0.05}
+    ]
+  },
+  {
+    "prompt": "高血压日常如何管理？",
+    "group_id": "g6",
+    "responses": [
+      {"response_id": "r1", "text": "高血压患者应注意低盐饮食、保持适量运动、戒烟限酒、定期监测血压，并按医嘱服药。", "reward": 0.95},
+      {"response_id": "r2", "text": "偶尔测血压即可，无需长期管理。", "reward": 0.3},
+      {"response_id": "r3", "text": "只要运动就能治高血压。", "reward": 0.1},
+      {"response_id": "r4", "text": "高血压无需控制饮食。", "reward": 0.05}
+    ]
+  },
+  {
+    "prompt": "孕妇感冒可以吃药吗？",
+    "group_id": "g7",
+    "responses": [
+      {"response_id": "r1", "text": "孕妇用药需谨慎，应优先选择非药物治疗，如多休息、多喝水。如必须用药，应咨询医生选择安全药物。", "reward": 0.95},
+      {"response_id": "r2", "text": "随便吃普通感冒药即可。", "reward": 0.1},
+      {"response_id": "r3", "text": "孕妇感冒无需治疗，自己会好。", "reward": 0.3},
+      {"response_id": "r4", "text": "可以大量服用维生素片代替药物。", "reward": 0.2}
+    ]
+  },
+  {
+    "prompt": "咳嗽带痰颜色发黄怎么办？",
+    "group_id": "g8",
+    "responses": [
+      {"response_id": "r1", "text": "咳嗽带黄痰可能提示细菌感染，可去医院就诊，必要时进行痰培养并按医嘱使用抗生素。", "reward": 0.95},
+      {"response_id": "r2", "text": "多喝水就能缓解。", "reward": 0.4},
+      {"response_id": "r3", "text": "无需处理，会自然消失。", "reward": 0.1},
+      {"response_id": "r4", "text": "咳黄痰一定是肺炎。", "reward": 0.05}
+    ]
+  },
+  {
+    "prompt": "头痛伴恶心可能是什么病？",
+    "group_id": "g9",
+    "responses": [
+      {"response_id": "r1", "text": "头痛伴恶心可能是偏头痛、脑膜炎或颅内压升高等情况。症状严重或持续，应及时就医。", "reward": 0.95},
+      {"response_id": "r2", "text": "可能是熬夜导致的，不必担心。", "reward": 0.3},
+      {"response_id": "r3", "text": "喝水就能缓解。", "reward": 0.1},
+      {"response_id": "r4", "text": "头痛伴恶心一定是脑出血。", "reward": 0.05}
+    ]
+  }
+]

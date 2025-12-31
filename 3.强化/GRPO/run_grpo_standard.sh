@@ -1,17 +1,17 @@
 #!/bin/bash
 
-# 优化的GRPO QLoRA训练脚本 - 解决显存不足问题
+# GRPO标准格式训练脚本 - 支持一个问题多个有序答案的数据格式
 # 针对32k长文本的配置
-CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node 1 grpo_training.py \
+CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node 1 grpo_training_standard.py \
     --model_name_or_path ../../model/Qwen/Qwen3-0.6B \
     --tokenizer_name_or_path ../../output/tokenizers_merge \
-    --train_file_dir ../../data/grpo \
+    --train_file_path ../../data/grpo_standard/train.json \
     --train_samples -1 \
     --max_steps -1 --num_train_epochs 1 \
     --save_steps 50 \
     --save_strategy steps \
     --save_total_limit 13 \
-    --output_dir ../../output/grpo_adapter \
+    --output_dir ../../output/grpo_standard_adapter \
     --dtype bfloat16 \
     --bf16 True \
     --report_to tensorboard \
@@ -23,6 +23,10 @@ CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node 1 grpo_training.py \
     --warmup_ratio 0.03 \
     --use_vllm False \
     --logging_steps 10 \
+    \
+    `# 标准GRPO数据格式相关配置` \
+    --use_standard_rewards True \
+    --max_responses_per_prompt 8 \
     \
     `# QLoRA配置` \
     --use_peft True \
