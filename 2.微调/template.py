@@ -6,7 +6,23 @@ __all__ = ['Conversation', 'register_conv_template', 'get_conv_template']
 
 @dataclass
 class Conversation:
-    """A class that manages prompt templates and keeps all conversation history."""
+    """
+    对话模板类，用于管理对话格式和保持对话历史记录。
+
+    该类基于 ChatML 格式（Qwen、Yi、InternLM2 等模型使用），通过模板化的方式
+    将消息列表转换为模型输入格式。ChatML 格式使用特殊标记来标识角色边界：
+    - <|im_start|>role: 开始角色标记
+    - <|im_end|>: 结束角色标记
+
+    Attributes:
+        name: 模板名称，用于注册和获取模板
+        system_prompt: 系统提示词，定义模型的身份和行为
+        messages: 消息列表，格式为 [[问题1, 答案1], [问题2, 答案2], ...]
+        roles: 角色名称，默认为 ("user", "assistant")
+        prompt: 用户问题模板，使用 {query} 作为占位符
+        sep: 分隔符，用于连接对话轮次
+        stop_str: 停止字符串，用于标识回复结束，默认为 <|im_end|>
+    """
 
     # The name of this template
     name: str
@@ -29,7 +45,28 @@ class Conversation:
             system_prompt: Optional[str] = ""
     ) -> str:
         """
-        Returns a string containing prompt without response.
+        获取包含对话历史的完整提示字符串（不包含最后一个回复）。
+
+        该方法将格式化后的对话列表连接成一个字符串，通常用于模型输入。
+        返回的字符串包含所有历史对话，但不包含最后的模型回复部分。
+
+        Args:
+            messages: 可选的消息列表，格式为 [[问题1, 答案1], [问题2, 答案2], ...]
+                     如果为None，则使用 self.messages
+            system_prompt: 可选的系统提示词，如果为空字符串则使用 self.system_prompt
+
+        Returns:
+            str: 包含系统提示和所有对话历史的字符串（最后一个问题的响应前）
+
+        Example (Qwen template):
+            Input:
+                messages = [["你好", "你好！我是Qwen助手"], ["今天天气如何", ""]]
+                system_prompt = "<|im_start|>system\\nYou are a helpful assistant.<|im_end|>\\n"
+
+            Output:
+                "<|im_start|>system\\nYou are a helpful assistant.<|im_end|>\\n"
+                "<|im_start|>user\\n你好<|im_end|>\\n<|im_start|>assistant\\n你好！我是Qwen助手<|im_end|>\\n"
+                "<|im_start|>user\\n今天天气如何<|im_end|>\\n<|im_start|>assistant\\n"
         """
         return "".join(self._format_example(messages, system_prompt))
 
@@ -39,7 +76,31 @@ class Conversation:
             system_prompt: Optional[str] = ""
     ) -> List[str]:
         """
-        Returns a list containing 2 * n elements where the 2k-th is a query and the (2k+1)-th is a response.
+        获取格式化后的对话列表。
+
+        该方法返回一个列表，其中偶数索引（0, 2, 4, ...）是用户问题，奇数索引（1, 3, 5, ...）是对应的模型回复。
+        列表的最后两个元素是最新的一轮对话（问题和回答）。
+
+        Args:
+            messages: 可选的消息列表，格式为 [[问题1, 答案1], [问题2, 答案2], ...]
+                     如果为None，则使用 self.messages
+            system_prompt: 可选的系统提示词，如果为空字符串则使用 self.system_prompt
+
+        Returns:
+            List[str]: 格式化后的对话列表，长度为 2*n，其中第 2k 个元素是问题，第 2k+1 个元素是答案
+
+        Example (Qwen template):
+            Input:
+                messages = [["你好", "你好！我是Qwen"], ["今天天气如何", "今天天气晴朗"]]
+                system_prompt = "<|im_start|>system\\nYou are a helpful assistant.<|im_end|>\\n"
+
+            Output:
+                [
+                    "<|im_start|>system\\nYou are a helpful assistant.<|im_end|>\\n<|im_start|>user\\n你好<|im_end|>\\n<|im_start|>assistant\\n",
+                    "你好！我是Qwen",
+                    "<|im_end|>\\n<|im_start|>user\\n今天天气如何<|im_end|>\\n<|im_start|>assistant\\n",
+                    "今天天气晴朗"
+                ]
         """
         return self._format_example(messages, system_prompt)
 
@@ -49,40 +110,54 @@ class Conversation:
             system_prompt: Optional[str] = ""
     ) -> List[str]:
         """
-        格式化对话示例，将消息列表转换为对话格式
-        
+        格式化对话示例，将消息列表转换为 ChatML 格式的对话序列。
+
+        ChatML 格式说明：
+        - <|im_start|>role: 开始一个角色（system/user/assistant）
+        - role 之后的内容是角色的文本
+        - <|im_end|>: 结束当前角色
+        - 不同角色之间用换行符分隔
+
         Args:
             messages: 可选的消息列表，格式为 [[问题1, 答案1], [问题2, 答案2], ...]
-                     如果为None，则使用self.messages
-            system_prompt: 可选的系统提示词，如果为空字符串则使用self.system_prompt
-        
+                     如果为None，则使用 self.messages
+            system_prompt: 可选的系统提示词，如果为空字符串则使用 self.system_prompt
+
         Returns:
-            List[str]: 格式化后的对话列表，包含系统提示、用户问题和机器人回答的交替序列
-        
-        Example:
+            List[str]: 格式化后的对话列表，包含系统提示、用户问题和助手回答的交替序列
+
+        Example (Qwen template with multi-turn conversation):
             Input:
-                messages = [["你好", "你好！我是AI助手"], ["今天天气如何", "今天天气晴朗"]]
-                system_prompt = "你是一个友好的AI助手"
-                self.sep = "</s>"
-                self.prompt = "USER: {query} ASSISTANT:"
-                self.system_prompt = "默认系统提示"
-            
+                messages = [["你好", "你好！我是Qwen助手"], ["感冒吃什么药？", "建议感冒多喝水"]]
+                system_prompt = "<|im_start|>system\\nYou are a helpful assistant.<|im_end|>\\n"
+                self.sep = "\\n"
+                self.prompt = "<|im_start|>user\\n{query}<|im_end|>\\n<|im_start|>assistant\\n"
+
             Output:
                 [
-                    "你是一个友好的AI助手</s>USER: 你好 ASSISTANT:",  # 系统提示 + 第一个用户问题
-                    "你好！我是AI助手",                               # 第一个机器人回答
-                    "</s>USER: 今天天气如何 ASSISTANT:",              # 分隔符 + 第二个用户问题
-                    "今天天气晴朗"                                    # 第二个机器人回答
+                    "<|im_start|>system\\nYou are a helpful assistant.<|im_end|>\\n<|im_start|>user\\n你好<|im_end|>\\n<|im_start|>assistant\\n",
+                    "你好！我是Qwen助手",
+                    "\\n<|im_start|>user\\n感冒吃什么药？<|im_end|>\\n<|im_start|>assistant\\n",
+                    "建议感冒多喝水"
                 ]
-        
-        Example (empty messages):
+
+            组合后的完整格式：
+            <|im_start|>system
+            You are a helpful assistant.<|im_end|>
+            <|im_start|>user
+            你好<|im_end|>
+            <|im_start|>assistant
+            你好！我是Qwen助手<|im_end|>
+            <|im_start|>user
+            感冒吃什么药？<|im_end|>
+            <|im_start|>assistant
+            建议感冒多喝水<|im_end|>
+
+        Example (Qwen template with empty messages):
             Input:
                 messages = []
                 system_prompt = ""
-                self.system_prompt = ""
-                self.sep = "</s>"
-                self.prompt = "USER: {query} ASSISTANT:"
-            
+
             Output:
                 []  # 空列表，因为没有消息需要格式化
         """
@@ -115,7 +190,16 @@ class Conversation:
         return convs
 
     def append_message(self, query: str, answer: str):
-        """Append a new message."""
+        """
+        追加新的对话消息。
+
+        Args:
+            query: 用户的问题
+            answer: 模型的回答
+
+        Example:
+            conv.append_message("什么是感冒？", "感冒是由病毒引起的上呼吸道感染...")
+        """
         self.messages.append([query, answer])
 
 
@@ -124,7 +208,25 @@ conv_templates: Dict[str, Conversation] = {}
 
 
 def register_conv_template(template: Conversation):
-    """Register a new conversation template."""
+    """
+    注册一个新的对话模板。
+
+    Args:
+        template: Conversation 对象，包含模板的所有配置
+
+    Example:
+        register_conv_template(
+            Conversation(
+                name="qwen",
+                system_prompt="<|im_start|>system\\nYou are a helpful assistant.<|im_end|>\\n",
+                messages=[],
+                roles=("user", "assistant"),
+                prompt="<|im_start|>user\\n{query}<|im_end|>\\n<|im_start|>assistant\\n",
+                sep="\\n",
+                stop_str="<|im_end|>",
+            )
+        )
+    """
     conv_templates[template.name] = template
 
 
@@ -607,5 +709,17 @@ register_conv_template(
 
 
 def get_conv_template(name: str) -> Conversation:
-    """Get a conversation template."""
+    """
+    根据名称获取已注册的对话模板。
+
+    Args:
+        name: 模板名称，如 "qwen", "llama3", "chatglm3" 等
+
+    Returns:
+        Conversation: 对应的对话模板对象
+
+    Example:
+        qwen_template = get_conv_template("qwen")
+        prompt = qwen_template.get_prompt([["你好", ""]])
+    """
     return conv_templates[name]
