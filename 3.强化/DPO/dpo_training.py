@@ -761,26 +761,64 @@ def load_raw_datasets(args) -> DatasetDict:
 
 def build_dpo_datasets(args, raw_datasets, prompt_template):
     """
-    将原始偏好数据构造成 DPOTrainer 所需格式：
+    将原始偏好数据（系统提示 + 历史对话 + 问题 + 选择/拒绝回答）构造成 DPOTrainer 所需的训练/验证数据集。
 
-    输出字段：
-    - prompt
-    - chosen
-    - rejected
-
-    并进行：
-    - prompt 拼接
-    - 长度过滤
-    - train / eval 分别处理
+    核心处理：
+    1. 对每条样本，使用对话模板生成 prompt（将 system + history + question 拼接）。
+    2. 将模型的“chosen”和“rejected”回答分别对应到 DPO 所需字段。
+    3. 支持 train / validation split，并对样本长度进行过滤，避免 OOM。
+    4. 支持限制最大样本数（debug 或加速训练）。
+    5. 返回 train_dataset 和 eval_dataset，可直接输入 DPOTrainer。
 
     Args:
-        args: 训练参数
-        raw_datasets: 原始数据
-        prompt_template: 对话模板
+        args: 训练参数（ScriptArguments）
+            - max_source_length: prompt 最大长度
+            - max_target_length: response 最大长度
+            - preprocessing_num_workers: 数据预处理进程数
+            - overwrite_cache: 是否覆盖缓存
+            - do_train / do_eval: 是否生成对应 split
+            - max_train_samples / max_eval_samples: 最大样本数量
+        raw_datasets: 原始数据集（DatasetDict），字段包括：
+            - system: str，每条样本的系统提示
+            - history: list，每条样本的历史对话 [[user_msg, assistant_msg], ...]
+            - question: str，用户问题
+            - response_chosen: str，模型优选回答
+            - response_rejected: str，模型不优回答
+        prompt_template: 对话模板（Conversation），用于将 system + history + question 拼接成最终 prompt
 
     Returns:
-        train_dataset, eval_dataset
+        train_dataset: 处理后的训练集 Dataset（包含 prompt, chosen, rejected 三个字段）
+        eval_dataset: 处理后的验证集 Dataset（包含 prompt, chosen, rejected 三个字段）
+
+    输入样例（raw_datasets 中一条数据）：
+        {
+            "system": "",
+            "history": [],
+            "question": "20个关于新鲜果汁菜单的口号，适用于一家名为\"Dishes\"的餐厅",
+            "response_chosen": "这里是一个名为“Dishes”的餐厅的20个口号，突出了其新鲜果汁菜单：1. “品尝Dishes新鲜果汁，感受不同！” ... 20. “Dishes：果汁永远新鲜，味道永远美味！”",
+            "response_rejected": "1. \"与菜肴一起品尝新鲜！\" ... 20. \"菜肴：新鲜始终是你一天的首选\""
+        }
+
+    输出样例（经过 Qwen 模板处理后的单条样本）：
+        {
+            "prompt": "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n20个关于新鲜果汁菜单的口号，适用于一家名为\"Dishes\"的餐厅<|im_end|>\n<|im_start|>assistant\n",
+            "chosen": "这里是一个名为“Dishes”的餐厅的20个口号，突出了其新鲜果汁菜单：1. “品尝Dishes新鲜果汁，感受不同！” ... 20. “Dishes：果汁永远新鲜，味道永远美味！”",
+            "rejected": "1. \"与菜肴一起品尝新鲜！\" ... 20. \"菜肴：新鲜始终是你一天的首选\""
+        }
+
+    说明：
+        - prompt 由 Conversation 模板生成：
+            <|im_start|>system
+            You are a helpful assistant.<|im_end|>
+            <|im_start|>user
+            {question}<|im_end|>
+            <|im_start|>assistant
+        - chosen / rejected 是对应模型优选与非优回答。
+        - 长度过滤保证 prompt+response 不超过 max_source_length + max_target_length。
+        - train_dataset 和 eval_dataset 可以直接输入 DPOTrainer。
     """
+
+
     max_length = args.max_source_length + args.max_target_length
 
     def build_prompt_and_responses(examples) -> Dict[str, str]:

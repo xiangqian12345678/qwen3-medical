@@ -1,3 +1,10 @@
+## 训练命令
+
+    模式一：输入问答+自动生成多个答案
+        sh run_grpo.sh
+    模式二：输入问题+多个有评分答案
+        sh run_grpo_standard.py
+
 ## 数据处理流程
 
     本地文件： jsonl
