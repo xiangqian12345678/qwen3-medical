@@ -499,32 +499,97 @@ def load_models(training_args, model_args):
 #     stop_str="<|im_end|>",
 # )
 # =========================
-
 def load_and_prepare_datasets(args, training_args, tokenizer, is_main_process):
     """
     加载并准备训练和评估数据集。
 
+    完整流程：
+    1. 加载原始数据集（train/validation）
+    2. 获取对话模板（如qwen模板）
+    3. 构建预处理函数（将对话转换为token序列）
+    4. 对数据集进行分词和过滤
+
     Args:
-        args: PPOArguments参数
-        training_args: 训练参数
-        tokenizer: 分词器
-        is_main_process: 是否为主进程
+        args: PPOArguments参数，包含数据路径、模板名称等配置
+        training_args: 训练参数，包含数据并行处理数等配置
+        tokenizer: 分词器，用于将文本转换为token
+        is_main_process: 是否为主进程（用于分布式训练日志控制）
 
     Returns:
         tuple: (train_dataset, eval_dataset)
+            - train_dataset: 处理后的训练数据集，包含input_ids等字段
+            - eval_dataset: 处理后的评估数据集，包含input_ids等字段
+
+    输入样例：
+        // 输入数据（JSON格式）
+        {
+            "conversations": [
+                {"from": "human", "value": "你好"},
+                {"from": "gpt", "value": "你好！我是Qwen助手"},
+                {"from": "human", "value": "感冒吃什么药？"},
+                {"from": "gpt", "value": "建议感冒多喝水"}
+            ]
+        }
+
+    步骤A：提取messages
+        输入：conversations字段
+        输出：messages = ["你好", "你好！我是Qwen助手", "感冒吃什么药？", "建议感冒多喝水"]
+    步骤B：构建history（问答对）
+        输出：history = [
+        ["你好", "你好！我是Qwen助手"],
+        ["感冒吃什么药？", "建议感冒多喝水"]
+    步骤C：应用模板格式化
+        dialog = prompt_template.get_dialog(history)
+        # 输出dialog列表（偶数索引是问题，奇数索引是答案）：
+        [
+            # 第1轮对话
+            "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n你好<|im_end|>\n<|im_start|>assistant\n",
+            "你好！我是Qwen助手",
+
+            # 第2轮对话
+            "\n<|im_start|>user\n感冒吃什么药？<|im_end|>\n<|im_start|>assistant\n",
+            "建议感冒多喝水"
+        ]
+    步骤D：分词
+        # 对dialog[0]和dialog[2]进行分词（只分问题部分）
+        tokenized_dialog_0 = tokenizer("<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n你好<|im_end|>\n<|im_start|>assistant\n")
+        # 输出：{"input_ids": [151644, 8948, 198, 2610, 525, 264, 10950, 17847, 13, 151645, 198, 151644, 872, 198, 2610, ...]}
+
+        tokenized_dialog_2 = tokenizer("\n<|im_start|>user\n感冒吃什么药？<|im_end|>\n<|im_start|>assistant\n")
+        # 输出：{"input_ids": [198, 151644, 872, 198, 23395, 9398, 998, 162, 151645, 198, 151644, 77091, 198, ...]}
+    最终：
+        {
+            "input_ids": [
+                # 样本1：第1轮对话的问题部分
+                [151644, 8948, 198, 2610, 525, 264, 10950, 17847, 13, 151645, 198, 151644, 872, 198, 2610, 1234, 151645, 198, 151644, 77091, 198],
+
+                # 样本2：第2轮对话的问题部分
+                [198, 151644, 872, 198, 23395, 9398, 998, 162, 151645, 198, 151644, 77091, 198]
+            ]
+        }
     """
+    # 步骤1：加载原始数据集（train和validation split）
     raw_datasets = load_raw_datasets(args)
     train_dataset = raw_datasets["train"]
     eval_dataset = raw_datasets["validation"]
 
+    # 步骤2：打印数据集信息（仅主进程打印，避免分布式训练重复打印）
     if is_main_process:
         logger.info(f"Get datasets: {train_dataset}, {eval_dataset}")
 
+    # 步骤3：获取对话模板（根据args.template_name，如"qwen"）
+    # 模板定义了如何将对话格式化为模型输入
     prompt_template = get_conv_template(args.template_name)
+
+    # 步骤4：构建预处理函数
+    # 该函数会将JSON格式的对话数据转换为模型可理解的token序列
     preprocess_fn = build_preprocess_function(
         tokenizer, prompt_template, args.max_source_length
     )
 
+    # 步骤5：对训练数据集进行分词和过滤
+    # - 使用map函数批量应用预处理函数
+    # - 过滤掉无效数据（如input_ids为空的样本）
     train_dataset = tokenize_and_filter(
         train_dataset,
         preprocess_fn,
@@ -533,6 +598,7 @@ def load_and_prepare_datasets(args, training_args, tokenizer, is_main_process):
         name="train",
     )
 
+    # 步骤6：对评估数据集进行分词和过滤（同上）
     eval_dataset = tokenize_and_filter(
         eval_dataset,
         preprocess_fn,
