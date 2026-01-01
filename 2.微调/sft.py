@@ -2,13 +2,11 @@ import math
 import os
 import sys
 from dataclasses import dataclass, field
-from glob import glob
 from types import MethodType
 from typing import Literal, Optional, Tuple
 
 import torch
 import torch.utils.data
-from datasets import load_dataset
 from loguru import logger
 from peft import LoraConfig, TaskType, get_peft_model, PeftModel, prepare_model_for_kbit_training
 from transformers import (
@@ -22,10 +20,10 @@ from transformers import (
     BitsAndBytesConfig,
     DataCollatorForSeq2Seq,
 )
+from transformers.integrations import is_deepspeed_zero3_enabled
 from transformers.trainer import TRAINING_ARGS_NAME
 from transformers.trainer_pt_utils import LabelSmoother
 from transformers.utils.versions import require_version
-from transformers.integrations import is_deepspeed_zero3_enabled
 
 is_flash_attn_2_available = False
 try:
@@ -118,20 +116,55 @@ class ModelArguments:
             "help": "Whether to trust remote code when loading a model from a remote checkpoint."
         },
     )
+
+    '''
+    RoPE 缩放策略,支持线性缩放和动态缩放两种模式
+    用于处理超出原始上下文长度的序列,通过扩展位置编码支持更长上下文
+    "linear"：线性缩放 RoPE
+    "dynamic"：动态 NTK-aware 缩放（效果通常更稳）
+    '''
     rope_scaling: Optional[Literal["linear", "dynamic"]] = field(
         default=None,
         metadata={"help": "Adopt scaled rotary positional embeddings."}
     )
+
+    '''
+    是否启用 FlashAttention-2 加速机制
+    FlashAttention-2 是一种优化的注意力算法,可以显著提升训练速度并降低显存占用
+    速度提升 1.5～3 倍
+    显存节省 30%～50%
+    '''
     flash_attn: Optional[bool] = field(
         default=False,
         metadata={"help": "Enable FlashAttention-2 for faster training."}
     )
+
+    '''
+    是否启用移位稀疏注意力机制
+    由 LongLoRA 提出,通过移位注意力模式实现对长上下文的高效处理，启用 LongLoRA 提出的 S²-Attn
+    本质是：
+        attention 做稀疏化
+        不同 layer 交错 shift，保证全局信息可达
+    解决什么问题
+        超长上下文（16k～64k）时 attention 计算爆炸
+        在不明显损伤效果的前提下，大幅省显存
+    注意
+        和 flash_attn 通常二选一
+        推理时也需要相同实现
+        对短文本几乎没收益
+    '''
     shift_attn: Optional[bool] = field(
         default=False,
         metadata={
             "help": "Enable shifted sparse attention (S^2-Attn) proposed by LongLoRA."
         }
     )
+
+    '''
+    启用 NEFTune
+    NEFTune 通过在嵌入层添加随机噪声来提升模型的泛化能力
+    通常取值为 5,设置为 0 表示不启用此功能
+    '''
     neft_alpha: Optional[float] = field(
         default=0,
         metadata={
@@ -175,10 +208,21 @@ class DataArguments:
             )
         },
     )
+    '''
+    计算损失时是否忽略填充 token
+    True: 只忽略 pad_token_id，确保模型只学习真实 token，而不是填充位置
+    False: 也会对填充位置计算损失（通常不推荐）
+    '''
     ignore_pad_token_for_loss: bool = field(
         default=True,
         metadata={"help": "If only pad tokens should be ignored. This assumes that `config.pad_token_id` is defined."},
     )
+
+    '''
+    是否覆盖已缓存的数据集
+    True: 重新处理并缓存训练和评估数据
+    False: 如果存在缓存则直接使用，加速数据加载
+    '''
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
     )
@@ -200,37 +244,137 @@ class DataArguments:
 
 @dataclass
 class ScriptArguments:
+    """
+    与训练策略 / PEFT配置 / 模板相关的参数
+    用于指定：是否使用PEFT、LoRA配置、训练策略等
+    """
+
+    '''
+    是否使用 PEFT (Parameter-Efficient Fine-Tuning)
+    PEFT 是一种参数高效的微调方法，包括 LoRA、Adapter、Prefix Tuning 等
+    True: 使用 PEFT（推荐，大幅减少显存占用和训练时间）
+    False: 全参数微调（需要更多显存和时间）
+    '''
     use_peft: bool = field(
         default=True,
         metadata={"help": "Whether to use peft"}
     )
+
+    '''
+    是否训练输入部分
+    True: 对输入部分也计算损失（通常不推荐，会让模型学习输入模式）
+    False: 只对输出部分计算损失（推荐，只学习生成目标）
+    '''
     train_on_inputs: bool = field(
         default=False,
         metadata={"help": "Whether to train on inputs"}
     )
+
+    '''
+    LoRA 目标模块
+    指定要对哪些模块应用 LoRA 注入
+    "all": 自动查找所有线性层（推荐）
+    也可以手动指定，如 "q_proj,v_proj" 或 "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj"
+    多个模块用逗号分隔
+    '''
     target_modules: Optional[str] = field(
         default="all"
     )
+
+    '''
+    LoRA 秩（rank）
+    控制 LoRA 低秩矩阵的维度
+    值越大，可学习的参数越多，表达能力越强，但显存占用也越大
+    常用值：8, 16, 32, 64
+    一般 8-16 已足够，大模型可考虑 32-64
+    '''
     lora_rank: Optional[int] = field(
         default=8
     )
+
+    '''
+    LoRA Dropout 比例
+    在 LoRA 层中应用 dropout，防止过拟合
+    常用值：0.0, 0.05, 0.1
+    数据量较小时可适当增大，数据量充足时可减小或设为 0
+    '''
     lora_dropout: Optional[float] = field(
         default=0.05
     )
+
+    '''
+    LoRA Alpha 缩放因子
+    控制更新量的缩放比例，公式：delta = (alpha / rank) * LoRA_matrix
+    值越大，LoRA 更新的影响力越大
+    常用值：16, 32, 64
+    通常设为 rank 的 2-4 倍
+    '''
     lora_alpha: Optional[float] = field(
         default=32.0
     )
+
+    '''
+    需要完整保存的模块
+    除了 LoRA 注入的模块外，还有哪些模块需要完整保存权重（用于微调）
+    多个模块用逗号分隔，设为 None 表示不额外保存任何模块
+
+    常用配置示例：
+        - None: 只使用 LoRA，不额外保存任何模块（推荐，参数量最少）
+        - "embed_tokens": 微调 embedding 层，适合添加新领域词汇
+        - "lm_head": 微调输出层，适合改变输出分布
+        - "embed_tokens,lm_head": 同时微调 embedding 和输出层（常用组合）
+        - "norm": 微调归一化层
+
+    使用场景：
+        1. 添加新词汇时：设置 "embed_tokens,lm_head"
+           - 因为新增 token 需要训练对应的 embedding 和输出层权重
+        2. 适配新领域时：设置 "embed_tokens"
+           - 让模型学习领域的词向量表示
+        3. 改变生成风格时：设置 "lm_head"
+           - 调整输出层的分布
+
+    注意事项：
+        - 设置此选项会显著增加可训练参数数量
+        - 每个 full module 的参数量等于原始模块大小
+        - embed_tokens: vocab_size × hidden_dim（通常很大）
+        - lm_head: vocab_size × hidden_dim（通常很大）
+    '''
     modules_to_save: Optional[str] = field(
         default=None
     )
+
+    '''
+    预训练的 PEFT 模型路径
+    如果已有训练好的 LoRA 权重，可以从该路径加载继续训练
+    设为 None 则初始化新的 LoRA 权重
+    '''
     peft_path: Optional[str] = field(
         default=None,
         metadata={"help": "The path to the peft model"}
     )
+
+    '''
+    是否使用 QLoRA (Quantized LoRA)
+    QLoRA 在 4bit 量化模型上应用 LoRA，进一步减少显存占用
+    True: 使用 4bit 量化 + LoRA（推荐用于大模型，如 7B 以上）
+    False: 使用标准 LoRA（小模型或显存充足时）
+    注意：需要设置 load_in_4bit=True 才能生效
+    '''
     qlora: bool = field(
         default=False,
         metadata={"help": "Whether to use qlora"}
     )
+
+    '''
+    模型最大上下文长度
+    控制训练时序列的最大长度，超出部分会被截断
+    常用值：512, 1024, 2048, 4096, 8192, 16384, 32768
+    建议：
+        - 短文本任务：512-1024
+        - 中等长度对话：2048-4096
+        - 长文档处理：8192-32768
+    注意：越长需要越多显存，建议根据任务需求和硬件条件选择
+    '''
     model_max_length: int = field(
         default=512,
         metadata={
@@ -240,6 +384,17 @@ class ScriptArguments:
             )
         }
     )
+
+    '''
+    提示词模板名称
+    用于将对话数据格式化为模型输入格式
+    不同模型对应不同的模板：
+        - "vicuna": Vicuna 模型
+        - "chatglm": ChatGLM 模型
+        - "qwen": Qwen 模型
+        - "baichuan": 百川模型
+        等，具体支持哪些模板见 template.py
+    '''
     template_name: Optional[str] = field(
         default="vicuna",
         metadata={"help": "The prompt template name."}
@@ -274,12 +429,43 @@ def save_model(model, tokenizer, args):
 
 
 def save_model_zero3(model, tokenizer, args, trainer):
-    """Save the model for deepspeed zero3."""
+    """
+    保存 DeepSpeed ZeRO-3 模型
+
+    ZeRO-3 (Zero Redundancy Optimizer Stage 3) 是一种分布式训练优化技术，
+    它将模型参数、梯度和优化器状态都切分到不同的 GPU 上，从而支持训练超大模型。
+    在保存模型时，需要将这些切分的参数合并并保存。
+
+    参数说明：
+        model: 原始模型对象
+        tokenizer: 分词器对象
+        args: 训练参数配置对象
+        trainer: Trainer 对象，包含 model_wrapped 等深度集成的组件
+
+    工作原理：
+        1. 从 trainer.model_wrapped 调用 _zero3_consolidated_16bit_state_dict()
+           该方法会将分散在各个 GPU 上的 16bit 模型参数收集并合并成完整的 state_dict
+        2. 获取模型的 module 对象（如果在 DDP/DDP+FSDP 包装下）
+        3. 使用合并后的 state_dict 保存完整的模型权重
+
+    为什么需要这个函数：
+        - 普通的 model.save_pretrained() 只能保存当前 rank 的参数
+        - ZeRO-3 中，完整参数被切分，需要特殊方法合并
+        - 只在主进程（rank 0）中执行保存，避免多进程冲突
+    注意事项：
+        - 此函数会收集所有 GPU 上的参数，需要足够的 CPU 内存
+        - 只在 DeepSpeed ZeRO-3 环境下使用，否则会报错
+        - 保存后的模型可以像普通预训练模型一样加载
+    """
     output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
+    # 收集并合并分散在各 GPU 上的 ZeRO-3 模型参数（16bit 精度）
     state_dict_zero3 = trainer.model_wrapped._zero3_consolidated_16bit_state_dict()
+    # 获取实际的模型对象（可能被 DDP/FSDP 包装）
     model_to_save = model.module if hasattr(model, "module") else model
+    # 使用合并后的 state_dict 保存完整模型
     model_to_save.save_pretrained(args.output_dir, state_dict=state_dict_zero3)
+    # 同时保存分词器
     tokenizer.save_pretrained(output_dir)
 
 
@@ -344,10 +530,46 @@ def check_and_optimize_memory():
         logger.info(f"  已缓存: {cached:.1f}GB")
         logger.info(f"  可用: {free:.1f}GB")
 
+    # ============ Flash Attention 优化 ============
+    # 原理：
+    #   Flash Attention 是一种优化的注意力计算算法，通过以下技术大幅提升性能：
+    #   1. Tiling 分块计算：将注意力矩阵分成小块，在高速 SRAM 中计算，避免频繁读写 HBM
+    #   2. IO 感知设计：针对 GPU 内存层次结构优化，最小化 HBM 访问次数
+    #   3. 在线 Softmax：结合 Softmax 计算和重缩放，避免显式存储完整的注意力矩阵
+    #
+    # 性能提升：
+    #   - 速度提升 2-4 倍（相比标准注意力）
+    #   - 显存节省 50%-75%（无需存储 N×N 的注意力矩阵）
+    #   - 支持更长序列（可达 32k-128k tokens）
+    #
+    # 数学原理：
+    #   标准注意力: Attention(Q,K,V) = softmax(QK^T/√d)V
+    #   Flash Attention 通过分块计算，每块独立进行 softmax 和累加，避免全量矩阵存储
+    #
+    # 注意事项：
+    #   - 需要 NVIDIA Ampere 架构（RTX 30系列、A100）或更新硬件
+    #   - 需要安装 flash-attn 库
+    #   - 某些模型结构可能不完全兼容
     if hasattr(torch.backends.cuda, 'enable_flash_sdp'):
         torch.backends.cuda.enable_flash_sdp(True)
         logger.info("✅ 启用Flash Attention优化")
 
+    # ============ 内存高效注意力机制 (Memory-Efficient Attention) ============
+    # 原理：
+    #   Memory-Efficient Attention 是另一种注意力优化方案，通过以下方式减少显存占用：
+    #   1. 梯度检查点 (Gradient Checkpointing)：在前向传播时不保存中间结果，反向传播时重新计算
+    #   2. 分块注意力计算：将大序列分成小块，逐块计算注意力
+    #   3. 延迟分配：按需分配显存，避免一次性占用过多
+    #
+    # 性能特点：
+    #   - 显存占用显著降低（30%-60%）
+    #   - 计算速度略慢于标准注意力（因需要重新计算）
+    #   - 兼容性更好，适用于各种硬件
+    #
+    # 适用场景：
+    #   - 显存受限的环境
+    #   - Flash Attention 不可用时作为备选方案
+    #   - 对速度要求不极致的场景
     if hasattr(torch.backends.cuda, 'enable_mem_efficient_sdp'):
         torch.backends.cuda.enable_mem_efficient_sdp(True)
         logger.info("✅ 启用内存高效注意力机制")
@@ -355,24 +577,34 @@ def check_and_optimize_memory():
 
 def get_dialog_from_examples(examples, prompt_template, roles):
     """
-    从训练样本中提取规范化后的对话文本，并生成最终 prompt
+    从训练样本中提取对话数据，并使用 Qwen 模板格式化后返回列表形式
+
+    该函数根据 Qwen 对话模板格式，将原始对话数据处理为 ChatML 格式的对话列表。
+    返回的列表中，偶数索引（0, 2, 4, ...）是用户问题，奇数索引（1, 3, 5, ...）是模型回复。
+    最终通过 prompt_template.get_dialog() 生成格式化后的列表。
+
+    Qwen 模板格式（ChatML）：
+    - system: <|im_start|>system\nYou are a helpful assistant.<|im_end|>\n
+    - user: <|im_start|>user\n{query}<|im_end|>\n
+    - assistant: <|im_start|>assistant\n{response}<|im_end|>\n
 
     参数说明：
-    - examples: 数据集中的一个 batch，通常包含：
-        - examples["conversations"]: 多轮对话列表
-        - examples["system_prompt"]（可选）: 与样本一一对应的 system prompt
-    - prompt_template: prompt 模板对象，负责将对话历史拼装成模型输入格式
-    - roles: 角色顺序定义，例如 ["user", "assistant"]
+    - examples: 数据集中的一个 batch，包含：
+        - examples["conversations"]: 多轮对话列表，每个元素是一轮对话
+        - examples["system_prompt"]（可选）: batch级别的系统提示词列表
+    - prompt_template: Conversation 对象，负责将对话历史格式化为 ChatML 格式
+    - roles: 角色顺序定义，例如 ["human", "gpt"]
 
     产出：
-    - yield 经过 prompt_template 处理后的完整对话字符串（generator）
+    - yield 格式化后的对话列表（List[str]），通过 generator 返回
+      列表格式：["问题1", "答案1", "问题2", "答案2", ...]
 
     样例：
     - 输入：
         examples = {
             "conversations": [
                 [
-                    {"from": "system", "value": "你是一个专业的医疗助手，请提供准确的医疗建议。"},
+                    {"from": "system", "value": "你是一个专业的医疗助手。"},
                     {"from": "human", "value": "治疗阳痿吃什么药呢？"},
                     {"from": "gpt", "value": "男子早泄、早泄病症的再次发生，多由恣情纵欲..."}
                 ],
@@ -385,12 +617,19 @@ def get_dialog_from_examples(examples, prompt_template, roles):
         }
 
         roles = ["human", "gpt"]
-    - 输出：
-        # 第一条对话的输出（包含system prompt）
-        "系统：你是一个专业的医疗助手，请提供准确的医疗建议。\n用户：治疗阳痿吃什么药呢？\n助手：男子早泄、早泄病症的再次发生，多由恣情纵欲..."
+
+    - 输出（通过 prompt_template.get_dialog() 生成）：
+        # 第一条对话的输出
+        [
+            "<|im_start|>system\n你是一个专业的医疗助手。<|im_end|>\n<|im_start|>user\n治疗阳痿吃什么药呢？<|im_end|>\n<|im_start|>assistant\n",
+            "男子早泄、早泄病症的再次发生，多由恣情纵欲..."
+        ]
 
         # 第二条对话的输出（使用batch级别的system prompt）
-        "系统：默认系统提示\n用户：两只脚明显大小不一样，该怎么办？\n助手：与走路姿势没有关系的，人的器官，没有完全对称的..."
+        [
+            "<|im_start|>system\n默认系统提示<|im_end|>\n<|im_start|>user\n两只脚明显大小不一样，该怎么办？<|im_end|>\n<|im_start|>assistant\n",
+            "与走路姿势没有关系的，人的器官，没有完全对称的..."
+        ]
     """
 
     # 取 batch 级别的 system_prompt（如果存在）
@@ -451,7 +690,20 @@ def get_dialog_from_examples(examples, prompt_template, roles):
         if not system_prompt:
             system_prompt = system_prompts[i] if system_prompts else ""
 
-        # 使用模板生成最终 prompt（通常是模型的输入文本）
+        '''
+        使用模板生成最终 prompt（通常是模型的输入文本）
+        样例：
+            [
+                {"from": "system", "value": "你是一个专业的医疗助手。"},
+                {"from": "human", "value": "治疗阳痿吃什么药呢？"},
+                {"from": "gpt", "value": "男子早泄、早泄病症的再次发生，多由恣情纵欲..."}
+            ]
+        输入：
+            history_messages = [
+                ["治疗阳痿吃什么药呢？", "男子早泄、早泄病症的再次发生，多由恣情纵欲..."]
+            ]
+            system_prompt = "你是一个专业的医疗助手。"
+        '''
         yield prompt_template.get_dialog(
             history_messages,
             system_prompt=system_prompt
@@ -491,8 +743,14 @@ def preprocess_dialogue_data(dialog, tokenizer, max_length, script_args, IGNORE_
     input_ids, labels = preprocess_dialogue_data(dialog, tokenizer, max_length, script_args, IGNORE_INDEX)
     
     # 预期输出：
-    # input_ids: [用户1的token序列] + [助手1的token序列] + [eos_token] + [用户2的token序列] + [助手2的token序列] + [eos_token]
-    # labels: [-100, -100, -100, ..., 助手1的token序列, eos_token, -100, -100, ..., 助手2的token序列, eos_token]
+    # input_ids: [bos_token] + [用户1的token序列] + [助手1的token序列] + [eos_token] + [用户2的token序列] + [助手2的token序列] + [eos_token]
+    # labels: [bos_token_id] + [-100, -100, -100, ...] + [助手1的token序列] + [eos_token_id] + [-100, -100, ...] + [助手2的token序列] + [eos_token_id]
+    #
+    # 说明：
+    # - 第一轮用户输入时添加 bos_token（因为 i == 0）
+    # - 用户输入部分在 labels 中设为 IGNORE_INDEX（-100），不参与 loss 计算
+    # - 助手回复部分和 eos_token 保留原始 token id，参与 loss 计算
+    # - 如果对话长度超出 max_length（512），会自动截断
     ```
     """
     input_ids, labels = [], []  # 初始化输入ID和标签列表
@@ -629,9 +887,9 @@ def setup_tokenizer(model_args, script_args):
     加载tokenizer：从预训练模型加载tokenizer
     获取对话模板：用于格式化输入文本
     特殊token设置：
-    EOS（结束符）：如果不存在则使用模板的停止字符串
-    BOS（开始符）：如果不存在则使用结束符
-    PAD（填充符）：优先使用未知token，否则使用结束符
+        EOS（结束符）：如果不存在则使用模板的停止字符串
+        BOS（开始符）：如果不存在则使用结束符
+        PAD（填充符）：优先使用未知token，否则使用结束符
     调试输出：记录tokenizer信息并返回
     """
     # 构建tokenizer的初始化参数字典
@@ -676,7 +934,12 @@ def setup_tokenizer(model_args, script_args):
     # 检查并设置结束符（eos_token）
     if tokenizer.eos_token_id is None:
         # 如果没有结束符，使用模板的停止字符串作为结束符
+        # 把你模板里的 stop_str 明确注册成 tokenizer 的 eos_token，并确保它有一个合法的 token id
+        # 1.语义层面的“认定”
+        #   从现在开始，prompt_template.stop_str 这个字符串，就是 EOS（End Of Sequence）
         tokenizer.eos_token = prompt_template.stop_str
+        # 2.词表层面的“注册”
+        #   关键动作，如果 stop_str 不在词表中，tokenizer 会把它加入 vocab，分配一个新的 token_id
         tokenizer.add_special_tokens({"eos_token": tokenizer.eos_token})
         logger.info(
             f"Add eos_token: {tokenizer.eos_token}, "
@@ -709,6 +972,7 @@ def setup_tokenizer(model_args, script_args):
     # 输出调试信息
     logger.debug(f"Tokenizer: {tokenizer}")
     return tokenizer, prompt_template
+
 
 def load_hf_datasets(data_args, model_args):
     """
@@ -880,7 +1144,6 @@ def load_datasets(data_args, model_args):
     logger.info("=" * 50)
 
     return raw_datasets
-
 
 
 def process_train_dataset(train_dataset, data_args, training_args, is_main_process, tokenizer, script_args,
@@ -1260,7 +1523,9 @@ def setup_neftune(model, model_args):
 
 
 def setup_model_patches(model, config, training_args):
-    """设置模型补丁 - 处理不同模型类型的特殊配置和训练优化"""
+    """
+    设置模型补丁 - 处理不同模型类型的特殊配置和训练优化
+    """
 
     # 1. 处理 ChatGLM 和 InternLM2 模型的输出层映射
     if getattr(config, "model_type", None) == "chatglm" or getattr(config, "model_type", None) == "internlm2":
@@ -1434,6 +1699,19 @@ def evaluate_model(trainer, max_eval_samples):
 
     Returns:
         dict: 包含评估指标的字典，包括loss、perplexity等指标
+
+    1.通用模型
+        | 场景                     | 困惑度区间   |
+        | ----------------------- | ------- |
+        | 基座模型（eval 在通用语料）  | 20 ~ 50 |
+        | 微调后（同分布数据）         | 10 ~ 30 |
+        | 非常强                    | < 10    |
+    2.领域模型
+        | 场景               | 困惑度           |
+        | ------------------ | ------------- |
+        | 基座模型（领域 eval） | 50 ~ 200（很常见） |
+        | 领域微调后           | 20 ~ 80       |
+        | 做得很好             | 10 ~ 30       |
     """
     # 检查当前进程是否为主进程（rank 0）
     # 只有主进程才会打印日志信息，避免多进程重复输出
@@ -1473,6 +1751,10 @@ def evaluate_model(trainer, max_eval_samples):
 
 
 def setup_model_config(model_args, script_args):
+    # getattr(torch, model_args.dtype)
+    #   传参： --dtype float16
+    #   程序内值： model_args.dtype == "float16"
+    #   值类型转化： getattr(torch, "float16")  → torch.float16
     dtype = (
         model_args.dtype
         if model_args.dtype in ["auto", None]

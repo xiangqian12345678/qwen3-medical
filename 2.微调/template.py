@@ -60,13 +60,14 @@ class Conversation:
 
         Example (Qwen template):
             Input:
-                messages = [["你好", "你好！我是Qwen助手"], ["今天天气如何", ""]]
-                system_prompt = "<|im_start|>system\\nYou are a helpful assistant.<|im_end|>\\n"
+                history_messages = [
+                    ["治疗阳痿吃什么药呢？", "男子早泄、早泄病症的再次发生，多由恣情纵欲..."]
+                ]
+                system_prompt = "你是一个专业的医疗助手。"
 
             Output:
-                "<|im_start|>system\\nYou are a helpful assistant.<|im_end|>\\n"
-                "<|im_start|>user\\n你好<|im_end|>\\n<|im_start|>assistant\\n你好！我是Qwen助手<|im_end|>\\n"
-                "<|im_start|>user\\n今天天气如何<|im_end|>\\n<|im_start|>assistant\\n"
+                "<|im_start|>system\\n你是一个专业的医疗助手。<|im_end|>\\n"
+                "<|im_start|>user\\n治疗阳痿吃什么药呢？<|im_end|>\\n<|im_start|>assistant\\n男子早泄、早泄病症的再次发生，多由恣情纵欲...<|im_end|>\\n"
         """
         return "".join(self._format_example(messages, system_prompt))
 
