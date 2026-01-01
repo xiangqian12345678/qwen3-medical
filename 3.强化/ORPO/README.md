@@ -1,7 +1,3 @@
-## 训练命令
-
-    sh run_dpo.sh
-
 ## 数据处理流程
 
     本地文件：jsonl
@@ -23,14 +19,12 @@
                 20. \"菜肴：新鲜始终是你一天的首选\"
             "
         }
-    
-    数据格式化： 只需要字段
+    格式处理：
         {
             "prompt": "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n20个关于新鲜果汁菜单的口号，适用于一家名为\"Dishes\"的餐厅<|im_end|>\n<|im_start|>assistant\n",
             "chosen": "这里是一个名为“Dishes”的餐厅的20个口号，突出了其新鲜果汁菜单：1. “品尝Dishes新鲜果汁，感受不同！” ... 20. “Dishes：果汁永远新鲜，味道永远美味！”",
             "rejected": "1. \"与菜肴一起品尝新鲜！\" ... 20. \"菜肴：新鲜始终是你一天的首选\""
         }
-
     说明：
         - prompt 由 Conversation 模板生成：
             <|im_start|>system
@@ -56,6 +50,15 @@
             "response_chosen":" ",
             "response_rejected":" "
         }
+
+## 开源数据使用
+
+    数据集合只需要转为下面格式就可以适配本程序：
+    { 
+        "question":" ",
+        "response_chosen":" ",
+        "response_rejected":" "
+    }
 
 ## 开源医疗数据
 

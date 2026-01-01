@@ -109,6 +109,25 @@
         # 程序采用多轮对话格式（适配单论对话语料）
         sh run_grpo_standard.sh  
 
+## 开源数据集使用
+
+    开源数据集合转化：
+    1.格式一：
+        {"question": "肛门病变可能是什么疾病的症状?", "answer": "食管克罗恩病"}
+        训练脚本： sh run_grpo.sh
+    2.格式二：
+         {
+          "prompt": "问题描述",
+          "group_id": "分组ID",
+          "responses": [
+            {"response_id": "r1", "text": "回答1", "reward": 0.92},
+            {"response_id": "r2", "text": "回答2", "reward": 0.35},
+            {"response_id": "r3", "text": "回答3", "reward": 0.15},
+            {"response_id": "r4", "text": "回答4", "reward": 0.05},
+          ]
+        }
+        训练脚本： sh run_grpo_standard.sh
+
 ## GRPO开源数据
 
     MedAlpaca

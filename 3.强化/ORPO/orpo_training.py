@@ -435,7 +435,49 @@ def create_dataset_preprocessor(prompt_template, full_max_length):
 
 
 def preprocess_datasets(raw_datasets, args, prompt_template, full_max_length, is_main_process):
-    """Preprocess training and evaluation datasets"""
+    """
+    Preprocess training and evaluation datasets
+
+    采用的模板 (qwen):
+    Conversation(
+        name="qwen",
+        system_prompt="<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n",
+        messages=[],
+        roles=("user", "assistant"),
+        prompt="<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n",
+        sep="\n",
+        stop_str="<|im_end|>",
+    )
+
+    输入样例 (raw_datasets 中的单条数据):
+    {
+        "system": "",
+        "history": [],
+        "question": "20个关于新鲜果汁菜单的口号，适用于一家名为\"Dishes\"的餐厅",
+        "response_chosen": "这里是一个名为\"Dishes\"的餐厅的20个口号，突出了其新鲜果汁菜单：\n1. \"品尝Dishes新鲜果汁，感受不同！\"\n2. \"新鲜榨取，直达您的餐桌 - Dishes果汁纯享！\"\n...\n20. \"Dishes：果汁永远新鲜，味道永远美味！\"",
+        "response_rejected": "1. \"与菜肴一起品尝新鲜！\"\n2. \"菜肴：新鲜果汁，新的开始！\"\n...\n20. \"菜肴：新鲜始终是你一天的首选\""
+    }
+
+    输出样例 (preprocess 后的数据):
+    {
+        "prompt": "<|im_start|>system\n<|im_end|>\n<|im_start|>user\n20个关于新鲜果汁菜单的口号，适用于一家名为\"Dishes\"的餐厅<|im_end|>\n<|im_start|>assistant\n",
+        "chosen": "这里是一个名为\"Dishes\"的餐厅的20个口号，突出了其新鲜果汁菜单：\n1. \"品尝Dishes新鲜果汁，感受不同！\"\n2. \"新鲜榨取，直达您的餐桌 - Dishes果汁纯享！\"\n...\n20. \"Dishes：果汁永远新鲜，味道永远美味！\"",
+        "rejected": "1. \"与菜肴一起品尝新鲜！\"\n2. \"菜肴：新鲜果汁，新的开始！\"\n...\n20. \"菜肴：新鲜始终是你一天的首选\""
+    }
+
+    Args:
+        raw_datasets: 原始数据集，包含训练集和验证集
+        args: 训练参数配置
+        prompt_template: prompt 模板，用于格式化输入
+        full_max_length: 最大序列长度 (max_source_length + max_target_length)
+        is_main_process: 是否为主进程（用于日志打印）
+
+    Returns:
+        train_dataset: 预处理后的训练数据集
+        max_train_samples: 训练集样本数量
+        eval_dataset: 预处理后的验证数据集
+        max_eval_samples: 验证集样本数量
+    """
     return_prompt_and_responses, filter_by_length = create_dataset_preprocessor(prompt_template, full_max_length)
 
     train_dataset = None
