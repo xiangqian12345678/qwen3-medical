@@ -820,40 +820,208 @@ def create_preprocess_function(tokenizer, prompt_template):
 
 
 def prepare_train_dataset(raw_datasets, data_args, training_args, tokenizer, preprocess_function, full_max_length):
-    """准备训练数据集"""
+    """
+    准备训练数据集
+
+    主要功能：
+    1. 检查是否执行训练（do_train标志）
+    2. 从raw_datasets中提取训练集
+    3. 可选：限制训练样本数量（用于调试或快速训练）
+    4. 使用tokenize函数对数据进行批处理分词
+    5. 过滤掉超长或无效的样本
+    6. 返回处理后的训练集和样本数量
+
+    Args:
+        raw_datasets (DatasetDict): 原始数据集，包含 'train' 和 'validation' split
+        data_args (DatasetArguments): 数据相关参数（max_train_samples, preprocessing_num_workers等）
+        training_args (TrainingArguments): 训练相关参数（do_train, local_rank等）
+        tokenizer: 分词器对象，用于解码token查看效果
+        preprocess_function (callable): 预处理函数，将原始文本转换为token ids
+        full_max_length (int): 最大允许长度（prompt+response），用于过滤样本
+
+    Returns:
+        tuple: (train_dataset, max_train_samples)
+            - train_dataset: 处理后的训练集（已tokenization和过滤），或None
+            - max_train_samples: 实际使用的训练样本数量，或0
+    输入样例：
+        {
+            "system": "",
+            "history": [],
+            "question": "20个关于新鲜果汁菜单的口号，适用于一家名为\"Dishes\"的餐厅",
+            "response_chosen": "这里是一个名为\"Dishes\"的餐厅的20个口号，突出了其新鲜果汁菜单：1. \"品尝Dishes新鲜果汁，感受不同！\" 2. \"新鲜榨取，直达您的餐桌 - Dishes果汁纯享！\" ... 20. \"Dishes：果汁永远新鲜，味道永远美味！\"",
+            "response_rejected": "1. \"与菜肴一起品尝新鲜！\" 2. \"菜肴：新鲜果汁，新的开始！\" ... 20. \"菜肴：新鲜始终是你一天的首选\""
+        }
+    步骤一： 构建 Prompt（
+    模板：
+        Conversation(
+            name="qwen",
+            system_prompt="<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n",
+            roles=("user", "assistant"),
+            prompt="<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n",
+            sep="\n",
+            stop_str="<|im_end|>"
+        )
+    处理：
+        {
+            "prompt": "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n20个关于新鲜果汁菜单的口号，适用于一家名为\"Dishes\"的餐厅<|im_end|>\n<|im_start|>assistant\n",
+            "chosen": "这里是一个名为\"Dishes\"的餐厅的20个口号，突出了其新鲜果汁菜单：1. \"品尝Dishes新鲜果汁，感受不同！\" 2. \"新鲜榨取，直达您的餐桌 - Dishes果汁纯享！\" ... 20. \"Dishes：果汁永远新鲜，味道永远美味！\"",
+            "rejected": "1. \"与菜肴一起品尝新鲜！\" 2. \"菜肴：新鲜果汁，新的开始！\" ... 20. \"菜肴：新鲜始终是你一天的首选\""
+        }
+    步骤二： 分词
+        {
+            "prompt_input_ids": [
+                151644,   # <|im_start|>
+                8948,     # system
+                198,      # \n
+                517,      # You
+                ...
+                14989,    # assistant
+                151645,   # <|im_end|>
+                198,      # \n
+                151644,   # <|im_start|>
+                77091,    # user
+                198,      # \n
+                20,       # 2
+                ...
+                585,      # 餐
+                292,      # 厅
+                151645,   # <|im_end|>
+                198,      # \n
+                151644,   # <|im_start|>
+                77091,    # assistant
+                198       # \n
+            ],
+
+            "chosen_input_ids": [
+                151644, 8948, ..., 198,
+                378,      # 这
+                268,      # 是
+                ...
+                30,       # "
+                # ... 更多口号内容 ...
+                151645    # <|im_end|>
+            ],
+
+            "rejected_input_ids": [
+                # prompt 部分同上
+                151644, 8948, ..., 198,
+                48, 236, 32, 30, 332,  # 1. "\""
+                338,      # 与
+                ...
+                33,       # ！
+                30,       # "
+                # ... 更多内容 ...
+                151645    # <|im_end|>
+            ]
+        }
+    步骤三：长度截断与填充
+        tokenized_dataset = Dataset([
+            {
+                "input_ids_chosen": [151644, 8948, 198, ...],
+                "attention_mask_chosen": [1, 1, 1, ...],
+                "input_ids_rejected": [151644, 8948, 198, ...],
+                "attention_mask_rejected": [1, 1, 1, ...]
+            },
+            # ... 更多样本
+        ])
+
+    步骤四：最终结果
+        train_dataset = Dataset([
+            {
+                "input_ids_chosen": [151644, 8948, 198, ...],  # ← 编码结果
+                "attention_mask_chosen": [1, 1, 1, ...],
+                "input_ids_rejected": [151644, 8948, 198, ...],  # ← 编码结果
+                "attention_mask_rejected": [1, 1, 1, ...]
+            },
+            # ... 保留长度符合要求的样本
+        ])
+    """
+
+    # ========== 检查是否执行训练 ==========
     if not training_args.do_train:
+        # 如果配置了不执行训练，直接返回None和0
         return None, 0
 
+    # ========== 校验训练集是否存在 ==========
     if "train" not in raw_datasets:
+        # raw_datasets中必须包含'train'键，否则抛出异常
+        # 这是因为DPO训练必须有训练数据
         raise ValueError("--do_train requires a train dataset")
 
+    # ========== 获取训练集 ==========
     train_dataset = raw_datasets['train']
-    max_train_samples = len(train_dataset)
 
+    # ========== 初始化最大样本数 ==========
+    max_train_samples = len(train_dataset)  # 默认使用全部训练样本
+
+    # ========== 限制训练样本数量（可选） ==========
     if data_args.max_train_samples is not None and data_args.max_train_samples > 0:
+        # 如果配置了max_train_samples参数，则限制使用样本数
+        # 例如：原始1000条，max_train_samples=100，则只使用前100条
+        # 用途：调试、快速验证、显存不足时减少数据量
         max_train_samples = min(len(train_dataset), data_args.max_train_samples)
+        # 使用select方法选取前max_train_samples条样本
         train_dataset = train_dataset.select(range(max_train_samples))
 
+    # ========== 打印原始样本数据（调试用）==========
     logger.debug(f"Example train_dataset[0]: {train_dataset[0]}")
+    # 输出示例：{
+    #     'system': '',
+    #     'history': [],
+    #     'question': '20个关于新鲜果汁菜单的口号...',
+    #     'response_chosen': '这里是一个名为\"Dishes\"的餐厅的...',
+    #     'response_rejected': '1. \"与菜肴一起品尝新鲜！\"...'
+    # }
 
+    # ========== 批量分词处理 ==========
     with training_args.main_process_first(desc="Train dataset tokenization"):
-        tokenized_dataset = train_dataset.shuffle().map(
-            preprocess_function,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=train_dataset.column_names,
-            load_from_cache_file=not data_args.overwrite_cache,
-            desc="Running tokenizer on dataset",
-        )
-        train_dataset = tokenized_dataset.filter(
-            lambda x: 0 < len(x['input_ids_rejected']) <= full_max_length and 0 < len(
-                x['input_ids_chosen']) <= full_max_length
-        )
-        logger.debug(f"Num train_samples: {len(train_dataset)}")
-        logger.debug("Tokenized training example:")
-        logger.debug(tokenizer.decode(train_dataset[0]['input_ids_chosen']))
+        # main_process_first：在分布式训练中，仅主进程执行tokenization并缓存
+        # 其他进程直接加载缓存，避免重复工作
+        # desc：描述信息，用于日志输出
 
+        tokenized_dataset = train_dataset.shuffle().map(
+            preprocess_function,  # 预处理函数，将文本转为token ids
+            batched=True,  # 批处理模式，提高效率
+            num_proc=data_args.preprocessing_num_workers,  # 多进程数量，加速处理
+            remove_columns=train_dataset.column_names,  # 移除原始列（system, history等），只保留token ids
+            load_from_cache_file=not data_args.overwrite_cache,  # 是否加载缓存（不覆盖时加载）
+            desc="Running tokenizer on dataset",  # 进度条描述
+        )
+        # shuffle(): 打乱数据顺序，保证训练随机性
+        # map(): 对每个样本应用preprocess_function
+        # tokenized_dataset结构：{
+        #     'input_ids_chosen': [[151644, 8948, ...], ...],
+        #     'input_ids_rejected': [[151644, 8948, ...], ...],
+        #     'attention_mask_chosen': [[1, 1, ...], ...],
+        #     'attention_mask_rejected': [[1, 1, ...], ...]
+        # }
+
+    # ========== 长度过滤 ==========
+    train_dataset = tokenized_dataset.filter(
+        lambda x: 0 < len(x['input_ids_rejected']) <= full_max_length
+                  and 0 < len(x['input_ids_chosen']) <= full_max_length
+    )
+    # 过滤条件：
+    # 1. 0 < len <= full_max_length：长度必须在1到最大长度之间
+    #    - 0表示过滤掉空样本
+    #    - full_max_length防止超长样本导致OOM（显存溢出）
+    # 2. chosen和rejected都必须满足长度限制
+    #    - DPO训练需要同时偏好对都有效
+    # 示例：full_max_length=1536，则只保留token数量在(0, 1536]范围内的样本
+
+    logger.debug(f"Num train_samples: {len(train_dataset)}")
+    # 输出过滤后的样本数量，例如：Num train_samples: 85（从100条过滤到85条）
+
+    # ========== 打印tokenization后的样本（调试用）==========
+    logger.debug("Tokenized training example:")
+    logger.debug(tokenizer.decode(train_dataset[0]['input_ids_chosen']))
+    # 将token ids解码回文本，查看tokenization效果
+    # 输出示例：'<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n20个关于新鲜果汁菜单的口号...<|im_end|>\n<|im_start|>assistant\n这里是一个名为"Dishes"的餐厅的...'
+
+    # ========== 返回处理结果 ==========
     return train_dataset, max_train_samples
+    # train_dataset: 已tokenization、已过滤的训练集
+    # max_train_samples: 实际使用的最大样本数（用于日志统计）
 
 
 def prepare_eval_dataset(raw_datasets, data_args, training_args, tokenizer, preprocess_function, full_max_length):
