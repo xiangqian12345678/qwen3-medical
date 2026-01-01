@@ -49,7 +49,7 @@ class ModelArguments:
         default=None,
         metadata={
             "help": (
-                "分词器路径。如果要从头训练模型，请不要设置此参数。"
+                "分词器路径，如果要从头训练模型，请不要设置此参数。"
             )
         },
     )
@@ -64,10 +64,19 @@ class ModelArguments:
         metadata={"help": "要使用的具体模型版本（可以是分支名、标签名或提交ID）"},
     )
     hf_hub_token: Optional[str] = field(default=None, metadata={"help": "登录Hugging Face Hub的认证令牌"})
+
+    # 用 Rust 实现、通过 tokenizers 库提供的高性能分词器，相比传统 Python 分词器快很多、内存更省
     use_fast_tokenizer: bool = field(
         default=False,
         metadata={"help": "是否使用快速分词器（由tokenizers库支持）"},
     )
+    '''
+    | 类型                 | 位宽 | 符号位 | 指数位 | 尾数位 | 数值范围  | 精度    | 典型用途           |
+    | ------------------- | --- | ----- | ----- | ----- | ------- | ------- | ------------------|
+    | **float32 (FP32)**  | 32  | 1     | 8     | 23    | 1e±38   | ★★★★★ | 训练基准、数值最稳定  |
+    | **float16 (FP16)**  | 16  | 1     | 5     | 10    | 1e±5    | ★★★    | 推理/训练加速       |
+    | **bfloat16 (BF16)** | 16  | 1     | 8     | 7     | 1e±38   | ★★☆    | 大模型训练首选       |
+    '''
     dtype: Optional[str] = field(
         default=None,
         metadata={
@@ -78,6 +87,23 @@ class ModelArguments:
             "choices": ["auto", "bfloat16", "float16", "float32"],
         },
     )
+    '''
+    device = 
+    1."auto"
+        适合：推理,微调,单机多卡,显存紧张的大模型
+    2."cpu"
+        模型全在 CPU, 主要用于 debug/显存不足兜底
+    3."cuda" or {"": "cuda:0"}
+        整个模型放到一张 GPU
+    4.手动指定（高阶玩家）
+        device_map = {
+            "model.embed_tokens": 0,
+            "model.layers.0": 0,
+            "model.layers.1": 0,
+            "model.layers.2": 1,
+            "lm_head": 1,
+        }
+    '''
     device_map: Optional[str] = field(
         default="auto",
         metadata={"help": "模型映射到的设备。如果传递'auto'，设备将被自动选择"},
@@ -100,10 +126,11 @@ class DataArguments:
     """
 
     dataset_name: Optional[str] = field(
-        default=None, metadata={"help": "要使用的数据集名称（通过datasets库）"}
+        default=None,
+        metadata={"help": "要使用的数据集名称（通过datasets库），例如： wikitext,Linly-AI/Chinese-pretraining-dataset"}
     )
     dataset_config_name: Optional[str] = field(
-        default=None, metadata={"help": "要使用的数据集配置名称（通过datasets库）"}
+        default=None, metadata={"help": "要使用的数据集配置名称（通过datasets库），例如：wikitext-2-raw-v1,none"}
     )
     train_file_dir: Optional[str] = field(default=None, metadata={"help": "训练文本数据文件文件夹"})
     validation_file_dir: Optional[str] = field(
@@ -114,7 +141,7 @@ class DataArguments:
         default=None,
         metadata={
             "help": (
-                "为了调试或更快训练，如果设置了此值，将训练样本数量截断到此值。"
+                "为了调试或更快训练，如果设置了此值，将训练样本数量截断到此值，"
             )
         },
     )
@@ -126,7 +153,20 @@ class DataArguments:
             )
         },
     )
+
+    '''
+    False（默认）:    数据集会完整下载,预处理后缓存到本地磁盘,再从本地反复读取`
+    True（流式模式）:  数据不落盘,按样本/按 batch 从源头“流式”读取,用一个读一个（iterable）
+    '''
     streaming: bool = field(default=False, metadata={"help": "启用流模式"})
+
+    '''
+    实际流程是这样的：
+        原始数据 文章/段落/多轮对话/多个JSON样本
+        全部tokenize
+        把 token 拼成一条很长的 token 流
+        再按 block_size 切块
+    '''
     block_size: Optional[int] = field(
         default=1024,
         metadata={
@@ -137,9 +177,17 @@ class DataArguments:
             )
         },
     )
+
+    '''
+    overwrite_cache=True:   
+        强制重新跑一遍“数据预处理流程”，无视之前已经缓存好的结果
+    overwrite_cache=False:  
+        能用缓存就用缓存，不再重新 tokenize / chunk / map
+    '''
     overwrite_cache: bool = field(
         default=False, metadata={"help": "覆盖缓存的训练和评估集"}
     )
+
     validation_split_percentage: Optional[int] = field(
         default=1,
         metadata={
@@ -150,6 +198,23 @@ class DataArguments:
         default=None,
         metadata={"help": "用于预处理的进程数"},
     )
+
+    '''
+    样例：
+        第一行：大模型预训练
+        第二行：通常是因果语言模型
+        第三行：block_size 很重要
+    keep_linebreaks=True：
+        模型看到的 token 流更像：
+            第一行 ： 大 模 型 预 训 练 \n
+            第二行 ： 通 常 是 因 果 语 言 模 型 \n
+            第三行 ： block_size 很 重 要
+        分词切分：   [段落1]\n[段落2]\n[段落3] → concat → 按 block_size 切
+    keep_linebreaks=False：
+        等价于先做：
+            第一行：大模型预训练 第二行：通常是因果语言模型 第三行：block_size 很重要
+        分词切分： 所有行 → 拼成一坨 → 按 block_size 切
+    '''
     keep_linebreaks: bool = field(
         default=True, metadata={"help": "使用TXT文件时是否保留换行符"}
     )
@@ -163,13 +228,11 @@ class DataArguments:
 def accuracy(predictions, references, normalize=True, sample_weight=None):
     """
     计算准确率
-    
     Args:
         predictions: 预测结果
         references: 真实标签
         normalize: 是否归一化
         sample_weight: 样本权重
-    
     Returns:
         准确率字典
     """
@@ -181,10 +244,8 @@ def accuracy(predictions, references, normalize=True, sample_weight=None):
 def compute_metrics(eval_preds):
     """
     计算评估指标
-    
     Args:
         eval_preds: 评估预测结果，包含预测和标签
-    
     Returns:
         准确率指标
     """
@@ -235,6 +296,11 @@ def fault_tolerance_data_collator(features: List) -> Dict[str, Any]:
     # 检查第一个特征是否为字典类型，如果不是则转换为字典
     # 这确保了后续处理的一致性
     if not isinstance(features[0], Mapping):
+        '''
+        features = [Feature("hello"), Feature("world")]
+        features = [vars(f) for f in features]
+        # features 变为: [{"text": "hello"}, {"text": "world"}]
+        '''
         features = [vars(f) for f in features]
 
     # 获取第一个特征作为模板，用于推断批次数据的结构
@@ -246,18 +312,55 @@ def fault_tolerance_data_collator(features: List) -> Dict[str, Any]:
     if "label" in first and first["label"] is not None:
         # 从张量中提取数值，如果是张量的话
         label = first["label"].item() if isinstance(first["label"], torch.Tensor) else first["label"]
-        # 根据标签数据类型推断合适的张量数据类型
-        # 整数标签通常用于分类任务，浮点标签用于回归任务
+
+        '''
+        根据标签数据类型推断合适的张量数据类型
+        整数标签通常用于分类任务，浮点标签用于回归任务
+        分类任务 features 列表
+            features = [
+                {"input_ids": [101, 102], "label": 0},
+                {"input_ids": [101, 103], "label": 1},
+                {"input_ids": [101, 104], "label": 0}
+            ]
+            batch["labels"] = tensor([0, 1, 0])
+        回归任务
+            features = [
+                {"input_ids": [101, 102], "label": 0.85},
+                {"input_ids": [101, 103], "label": 0.92}
+            ]
+            batch["labels"] = tensor([0.8500, 0.9200])
+        '''
         dtype = torch.long if isinstance(label, int) else torch.float
         batch["labels"] = torch.tensor([f["label"] for f in features], dtype=dtype)
 
     # 处理另一种常见的标签格式 label_ids
     elif "label_ids" in first and first["label_ids"] is not None:
         if isinstance(first["label_ids"], torch.Tensor):
-            # 如果已经是张量，直接堆叠成批次
+            '''
+            如果已经是张量，直接堆叠成批次
+            features = [
+                {"input_ids": [101, 102, 103], "label_ids": torch.tensor([1, 0, 0])},
+                {"input_ids": [101, 102, 104], "label_ids": torch.tensor([0, 1, 0])},
+                {"input_ids": [101, 103, 105], "label_ids": torch.tensor([0, 0, 1])}
+            ]
+            batch["labels"] = tensor([
+                [1, 0, 0],
+                [0, 1, 0],
+                [0, 0, 1]
+            ])
+            '''
             batch["labels"] = torch.stack([f["label_ids"] for f in features])
         else:
-            # 如果是列表或其他格式，先推断数据类型再转换为张量
+            '''
+            如果是列表或其他格式，先推断数据类型再转换为张量
+            label_ids 包含整数（分类任务）
+            features = [
+                {"input_ids": [101, 102, 103], "label_ids": [0, 1, 0]},
+                {"input_ids": [101, 104, 105], "label_ids": [1, 0, 1]},
+                {"input_ids": [101, 106, 107], "label_ids": [0, 0, 1]}
+            ]
+            batch["labels"] = tensor([[0, 1, 0], [1, 0, 1], [0, 0, 1]], dtype=torch.int64)
+            '''
             dtype = torch.long if type(first["label_ids"][0]) is int else torch.float
             batch["labels"] = torch.tensor([f["label_ids"] for f in features], dtype=dtype)
 
@@ -325,9 +428,46 @@ def save_model(model, tokenizer, args):
     output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
 
-    # 处理分布式/并行训练
+    '''
+    如果这是多卡训练模型 → 用裸模型
+    如果是单卡训练模型 → 直接用
+    单GPU训练场景：
+        model = AutoModelForCausalLM.from_pretrained(...)
+        hasattr(model, "module")  # False
+        model_to_save = model  # 直接使用原始模型
+    多GPU分布式训练（DDP）场景：
+        import torch.nn as nn
+        # 使用 DistributedDataParallel 包装模型
+        model = nn.DataParallel(model)
+        # 或在 DDP 中：
+        # model = DistributedDataParallel(model, device_ids=[local_rank])
+        
+        hasattr(model, "module")  # True
+        model_to_save = model.module  # 提取被包装的原始模型
+        分布式训练中 （多层包装）：
+            ┌─────────────────────────┐
+            │  DataParallel/DDP       │ ← 包装器，负责梯度同步
+            │  ┌───────────────────┐  │
+            │  │   原始模型对象     │  ← 真正的模型参数在这里
+            │  │  - embedding层    │  │
+            │  │  - transformer层 │  │
+            │  │  - lm_head        │  │
+            │  └───────────────────┘  │
+            └─────────────────────────┘
+    '''
+    # 处理分布式训练的模型包装
     model_to_save = model.module if hasattr(model, "module") else model
+
+    # 保存模型权重和配置生成文件：
+    # - config.json           # 模型配置
+    # - pytorch_model.bin     # 或 model.safetensors（权重）
+    # - generation_config.json # 生成配置
     model_to_save.save_pretrained(output_dir)
+
+    # 保存分词器 生成文件：
+    # - tokenizer_config.json
+    # - vocab.json / merges.txt（分词器文件）
+    # - special_tokens_map.json
     tokenizer.save_pretrained(output_dir)
 
 
@@ -416,14 +556,30 @@ def tokenize_function(tokenizer, examples, block_size):
     if not valid_texts:
         return {"input_ids": [], "attention_mask": [], "labels": []}
 
+    '''
+    返回结构：
+    {
+        'input_ids': [[token_ids_1], [token_ids_2], ...],  # shape: [batch_size, max_length]
+        'attention_mask': [[mask_1], [mask_2], ...],         # shape: [batch_size, max_length]
+    }
+    '''
     tokenized_inputs = tokenizer(
         valid_texts,
         truncation=True,
         padding='max_length',
         max_length=block_size
     )
-    # 将input_ids复制到labels用于语言建模。这适用于
-    # 掩码语言建模（如BERT）或因果语言建模（如GPT）。
+
+    '''
+    将input_ids复制到labels用于语言建模，这适用于掩码语言建模（如BERT）或因果语言建模（如GPT）。
+    为什么labels和input_ids相同？
+      因为在计算损失时，HF 会自动将 labels 向左移位，只计算当前位置预测下一个位置的损失：
+    # 实际上 HF 内部等价于：
+    loss = CrossEntropy(
+        logits[:, :-1, :],    # A, B, C 的预测
+        labels[:, 1:]         # B, C, D 的标签
+    )
+    '''
     tokenized_inputs["labels"] = tokenized_inputs["input_ids"].copy()
     return tokenized_inputs
 
@@ -431,13 +587,37 @@ def tokenize_function(tokenizer, examples, block_size):
 def tokenize_wo_pad_function(tokenizer, examples):
     """
     不带填充的分词函数：仅进行分词不填充
-    
+
     Args:
         tokenizer: 分词器
         examples: 包含文本的示例
-    
+
     Returns:
         分词后的结果
+
+    输入样例：
+        examples = {
+            "text": ["你好世界", "我爱NLP"]
+        }
+    输出样例：
+        {
+            "input_ids": [
+                [1, 6453, 7444, 2],
+                [1, 2769, 426, 4986, 2]
+            ],
+            "attention_mask": [
+                [1, 1, 1, 1],
+                [1, 1, 1, 1, 1]
+            ]
+        }
+    常用于下面的链路：
+        原始文本
+           ↓
+        tokenize_wo_pad_function   （只分词）
+           ↓
+        group_texts / chunking     （按 block_size 拼接）
+           ↓
+        DataCollatorForLanguageModeling（再 padding）
     """
     # 确保text字段是字符串类型
     texts = examples["text"]
@@ -482,7 +662,31 @@ def group_text_function(examples, block_size):
     if not examples or not any(examples.values()):
         return {"input_ids": [], "attention_mask": [], "labels": []}
 
-    # 连接所有文本
+    '''
+    链接所有的样本：
+    输入样例：
+        examples = {
+            "input_ids": [
+                [101, 2009, 2001, 1037, 2204, 2154, 102],
+                [101, 2023, 2003, 1037, 7099, 102]
+            ],
+            "attention_mask": [
+                [1, 1, 1, 1, 1, 1, 1],
+                [1, 1, 1, 1, 1, 1]
+            ]
+        }
+    输出样例：
+        concatenated_examples = {
+            "input_ids": [
+                101, 2009, 2001, 1037, 2204, 2154, 102,
+                101, 2023, 2003, 1037, 7099, 102
+            ],
+            "attention_mask": [
+                1, 1, 1, 1, 1, 1, 1,
+                1, 1, 1, 1, 1, 1
+            ]
+        }
+    '''
     concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
 
     # 检查连接后的文本是否为空
@@ -554,24 +758,28 @@ def load_local_datasets(data_args, model_args, is_main_process):
     if extension == "text":
         dataset_args["keep_linebreaks"] = data_args.keep_linebreaks
 
-    # 功能: 使用Hugging Face datasets库的load_dataset函数从本地文件加载数据集
-    # 支持的文件格式: txt、json、jsonl等
-    # 输入样例:
-    #   extension = "text"
-    #   data_files = {"train": ["data/train.txt", "data/train2.txt"], "validation": ["data/eval.txt"]}
-    #   dataset_args = {"keep_linebreaks": True}
-    #   cache_dir = "./cache"
-    # 输出样例:
-    #   raw_datasets = {
-    #       "train": Dataset({
-    #           features: ['text'],
-    #           num_rows: 100000
-    #       }),
-    #       "validation": Dataset({
-    #           features: ['text'],
-    #           num_rows: 1000
-    #       })
-    #   }
+    '''
+    功能: 使用Hugging Face datasets库的load_dataset函数从本地文件加载数据集
+    支持的文件格式: txt、json、jsonl等
+    输入数据样例：
+        extension = "text"
+        data_files = {
+            "train": ["data/train.txt", "data/train2.txt"],
+            "validation": ["data/eval.txt"]
+        }
+        dataset_args = {"keep_linebreaks": True}
+    输出数据样例：
+        raw_datasets = {
+          "train": Dataset(   # ← 一个 Dataset
+              num_rows = train.txt + train2.txt 的总行数
+              features = ["text"]
+          ),
+          "validation": Dataset(  # ← 一个 Dataset
+              num_rows = eval.txt 的总行数
+              features = ["text"]
+          )
+        }
+    '''
     raw_datasets = load_dataset(
         extension,
         data_files=data_files,
@@ -773,11 +981,16 @@ def load_model_and_tokenizer(model_args):
     Returns:
         模型、分词器和块大小
     """
-    # 设置数据类型
+    '''
+    设置数据类型
+    getattr(torch, model_args.dtype) #
+    等价于：
+    torch.<model_args.dtype>
+    '''
     dtype = (
         model_args.dtype
         if model_args.dtype in ["auto", None]
-        else getattr(torch, model_args.dtype)
+        else getattr(torch, model_args.dtype)  # torch.<model_args.dtype>
     )
 
     # 加载分词器
@@ -836,24 +1049,396 @@ def load_model_and_tokenizer(model_args):
         else:
             device_map = "cpu"
 
-    # 加载因果语言模型
+    '''
+    加载因果语言模型
+    low_cpu_mem_usage=False:
+        在 CPU 上创建完整模型
+        加载全部权重到 CPU
+        再拷贝到 GPU
+    low_cpu_mem_usage=True
+        使用 meta tensor
+        逐层加载权重
+        CPU 不会同时持有完整模型
+    那为啥 Zero-3 时反而要关掉？
+        Deepspeed ZeRO-3 自己就接管了参数的创建和分片，
+        和 Hugging Face 的 low_cpu_mem_usage 机制冲突。
+    '''
     model_kwargs = {
         "config": config,
         "dtype": dtype,
         "low_cpu_mem_usage": (not is_deepspeed_zero3_enabled()),
         **config_kwargs,
     }
-    
+
     # 只有在非 DeepSpeed Zero-3 模式下才添加 device_map
     if device_map is not None:
         model_kwargs["device_map"] = device_map
-    
+
     model = AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
         **model_kwargs,
     )
 
     return model, tokenizer, block_size
+
+
+def _preprocess_dataset_nonstreaming_group_by_length(
+    raw_datasets, data_args, tokenizer, block_size, column_names, is_main_process
+):
+    """
+    非流模式下按长度分组预处理数据集
+
+    Args:
+        raw_datasets: 原始数据集
+        data_args: 数据参数
+        tokenizer: 分词器
+        block_size: 块大小
+        column_names: 列名列表
+        is_main_process: 是否为主进程
+
+    Returns:
+        预处理后的数据集字典
+    """
+    lm_datasets = {}
+    for split in ["train", "validation"]:
+        if split in raw_datasets:
+            # ========== 非流模式 - 第一层分词 ==========
+            # 非流模式特征：数据集会完整下载并缓存到本地磁盘，然后从本地反复读取
+            tokenized_dataset = raw_datasets[split].map(
+                lambda examples: tokenize_wo_pad_function(tokenizer, examples),
+                batched=True,  # 批量处理提高效率
+                # ===== 非流模式特征点1：使用多进程并行处理 =====
+                # num_proc 参数指定了预处理的进程数，可以利用多核CPU加速处理
+                # 这在非流模式下是安全的，因为所有数据都已经加载到内存/缓存
+                num_proc=data_args.preprocessing_num_workers,
+                remove_columns=column_names,  # 移除原始文本列，只保留tokenized数据
+                # ===== 非流模式特征点2：使用缓存文件 =====
+                # load_from_cache_file=not data_args.overwrite_cache 表示：
+                # - 如果 overwrite_cache=False（默认），优先从缓存文件读取，避免重复处理
+                # - 缓存文件存储在 ~/.cache/huggingface/datasets/ 目录下
+                # - 非流模式可以将预处理结果持久化，大幅加速后续训练
+                load_from_cache_file=not data_args.overwrite_cache,
+                desc=f"在{split}数据集上运行分词器" if is_main_process else None,
+            )
+            # ========== 非流模式 - 第二层分组 ==========
+            # 将分词后的数据按block_size进行拼接和切分
+            lm_datasets[split] = tokenized_dataset.map(
+                lambda examples: group_text_function(examples, block_size),
+                batched=True,
+                # ===== 非流模式特征点3：继续使用多进程 =====
+                # 分组操作也支持多进程并行，进一步提高预处理效率
+                num_proc=data_args.preprocessing_num_workers,
+                # ===== 非流模式特征点4：分组结果也会被缓存 =====
+                load_from_cache_file=not data_args.overwrite_cache,
+                desc=f"将{split}数据集分组成{block_size}大小的块",
+            )
+    return lm_datasets
+
+
+def _preprocess_dataset_nonstreaming_direct(
+    raw_datasets, data_args, tokenizer, block_size, column_names, is_main_process
+):
+    """
+    非流模式下直接分词并填充预处理数据集
+
+    Args:
+        raw_datasets: 原始数据集
+        data_args: 数据参数
+        tokenizer: 分词器
+        block_size: 块大小
+        column_names: 列名列表
+        is_main_process: 是否为主进程
+
+    Returns:
+        预处理后的数据集字典
+    """
+    lm_datasets = {}
+    for split in ["train", "validation"]:
+        if split in raw_datasets:
+            lm_datasets[split] = raw_datasets[split].map(
+                lambda examples: tokenize_function(tokenizer, examples, block_size),
+                batched=True,
+                num_proc=data_args.preprocessing_num_workers,
+                remove_columns=column_names,
+                load_from_cache_file=not data_args.overwrite_cache,
+                desc=f"在{split}数据集上运行分词器" if is_main_process else None,
+            )
+    return lm_datasets
+
+
+def _preprocess_dataset_streaming_group_by_length(
+    raw_datasets, tokenizer, block_size, column_names
+):
+    """
+    流模式下按长度分组预处理数据集
+
+    Args:
+        raw_datasets: 原始数据集
+        tokenizer: 分词器
+        block_size: 块大小
+        column_names: 列名列表
+
+    Returns:
+        预处理后的数据集字典
+
+    流模式特点:
+        - 不设置 load_from_cache_file 参数（默认为 None）
+        - 不设置 num_proc 参数（默认为 None，不使用多进程）
+        - 数据不落盘，按需从源头读取（iterable）
+        - 适用于超大规模数据集，节省磁盘空间
+    """
+    lm_datasets = {}
+    for split in ["train", "validation"]:
+        if split in raw_datasets:
+            # 第一层分词：将文本转换为token ids
+            # 流模式显示点1：不使用缓存文件（load_from_cache_file未设置）
+            # 流模式显示点2：不使用多进程（num_proc未设置）
+            tokenized_dataset = raw_datasets[split].map(
+                lambda examples: tokenize_wo_pad_function(tokenizer, examples),
+                batched=True,
+                remove_columns=column_names,
+            )
+            # 第二层分组：将token ids拼接并按block_size切分
+            # 流模式显示点3：不使用缓存文件（load_from_cache_file未设置）
+            # 流模式显示点4：不使用多进程（num_proc未设置）
+            lm_datasets[split] = tokenized_dataset.map(
+                lambda examples: group_text_function(examples, block_size),
+                batched=True,
+            )
+    return lm_datasets
+
+
+def _preprocess_dataset_streaming_direct(
+    raw_datasets, tokenizer, block_size, column_names
+):
+    """
+    流模式下直接分词并填充预处理数据集
+
+    Args:
+        raw_datasets: 原始数据集
+        tokenizer: 分词器
+        block_size: 块大小
+        column_names: 列名列表
+
+    Returns:
+        预处理后的数据集字典
+    """
+    lm_datasets = {}
+    for split in ["train", "validation"]:
+        if split in raw_datasets:
+            lm_datasets[split] = raw_datasets[split].map(
+                lambda examples: tokenize_function(tokenizer, examples, block_size),
+                batched=True,
+                remove_columns=column_names,
+            )
+    return lm_datasets
+
+
+def _tokenize_and_group_datasets(raw_datasets, data_args, tokenizer, block_size, training_args):
+    """
+    对数据集进行分词和分组处理
+
+    Args:
+        raw_datasets: 原始数据集
+        data_args: 数据参数
+        tokenizer: 分词器
+        block_size: 块大小
+        training_args: 训练参数
+
+    Returns:
+        预处理后的数据集字典
+    """
+    if training_args.do_train:
+        column_names = list(raw_datasets["train"].features)
+    else:
+        column_names = list(raw_datasets["validation"].features)
+
+    is_main_process = training_args.local_rank in [-1, 0]
+
+    # ========== training_args.main_process_first() 核心作用 ==========
+    #
+    # main_process_first 是 Hugging Face Trainer 提供的上下文管理器，用于在分布式训练中
+    # 协调主进程（rank 0）和子进程（rank 1, 2, ...）的执行顺序，避免缓存冲突。
+    #
+    # 【为什么需要它？】
+    #
+    # 在非流模式下，数据集预处理会生成缓存文件并保存到磁盘：
+    #   - ~/.cache/huggingface/datasets/xxxx/xxxx.arrow
+    #
+    # 如果多个进程同时尝试写入同一个缓存文件，会发生文件冲突或数据损坏。
+    # 例如：4卡训练时，rank 0, 1, 2, 3 同时执行 preprocessing.map() → 竞争写入 → 错误
+    #
+    # 【main_process_first 的工作机制】
+    #
+    # 使用 with training_args.main_process_first(desc="..."): 时：
+    #
+    # 1. 主进程（rank 0）：
+    #    - 执行 with 块内的代码，完成数据集预处理
+    #    - 生成缓存文件并保存到磁盘
+    #    - 其他所有子进程（rank 1, 2, ...）在 with 语句处阻塞等待
+    #
+    # 2. 子进程（rank 1, 2, ...）：
+    #    - 在 with 语句处阻塞，等待主进程完成
+    #    - 主进程完成后，子进程进入 with 块
+    #    - 由于缓存文件已存在（load_from_cache_file=True），直接从缓存加载，跳过预处理
+    #
+    # 【实际执行流程示例】（4卡分布式训练）
+    #
+    # 时间线：
+    #   ┌─────────────────────────────────────────────────────────────┐
+    #   │ rank 0: 进入 with 块 → 执行 preprocessing.map() → 写缓存   │
+    #   │ rank 1: 在 with 外等待...                                   │
+    #   │ rank 2: 在 with 外等待...                                   │
+    #   │ rank 3: 在 with 外等待...                                   │
+    #   ├─────────────────────────────────────────────────────────────┤
+    #   │ rank 0: 退出 with 块，缓存文件已生成                          │
+    #   │ rank 1: 进入 with 块 → 检测到缓存 → 直接加载缓存 → 退出      │
+    #   │ rank 2: 进入 with 块 → 检测到缓存 → 直接加载缓存 → 退出      │
+    #   │ rank 3: 进入 with 块 → 检测到缓存 → 直接加载缓存 → 退出      │
+    #   └─────────────────────────────────────────────────────────────┘
+    #
+    # 【适用场景】
+    #
+    # - ✅ 非流模式（streaming=False）：数据集预处理会生成缓存文件，必须使用
+    # - ❌ 流模式（streaming=True）：数据不落盘，无缓存文件，可以使用但无意义
+    #
+    # 【对比：如果不使用 main_process_first 会怎样？】
+    #
+    # 场景：4卡同时训练，不使用 main_process_first
+    #
+    #   - rank 0 开始预处理，开始写缓存文件 cache.arrow
+    #   - rank 1 同时开始预处理，也尝试写同一个缓存文件 cache.arrow
+    #   - rank 2、rank 3 同样操作
+    #   - 结果：文件冲突、写入失败、或者多个进程互相覆盖 → 数据损坏或程序崩溃
+    #
+    # 【内部实现原理】
+    #
+    # main_process_first 内部使用了分布式屏障（Barrier）机制：
+    #
+    #   - 入口：所有进程调用 barrier()，rank 0 先通过，其他进程阻塞
+    #   - 出口：rank 0 执行完后，调用 barrier()，其他进程被释放
+    #   - 使用 torch.distributed.barrier() 或 nccl barrier 实现
+    #
+    # 【desc 参数的作用】
+    #
+    # desc="数据集分词和分组" 用于日志输出，显示进度信息：
+    #
+    #   - 主进程执行时：会打印 "数据集分词和分组" 进度条
+    #   - 子进程等待时：会打印 "等待主进程完成：数据集分词和分组"
+    #   - 便于调试和监控训练进度
+    #
+    # 【总结】
+    #
+    # main_process_first 是分布式训练中的同步机制，确保：
+    #   1. 只有主进程执行数据预处理并写入缓存
+    #   2. 子进程等待主进程完成后直接读取缓存
+    #   3. 避免多进程并发写入同一文件导致的冲突
+    #   4. 在非流模式下是必须的，流模式下无作用
+    #
+    with training_args.main_process_first(desc="数据集分词和分组"):
+        if not data_args.streaming:
+            # ========== 非流模式 ==========
+            # 数据集会完整下载、预处理、缓存到磁盘，后续直接从缓存读取
+            if training_args.group_by_length:
+                # 按长度分组模式：先分词不填充，再分组，减少 padding 浪费
+                lm_datasets = _preprocess_dataset_nonstreaming_group_by_length(
+                    raw_datasets, data_args, tokenizer, block_size, column_names, is_main_process
+                )
+            else:
+                # 直接分词并填充模式：一步完成分词和 padding 到 block_size
+                lm_datasets = _preprocess_dataset_nonstreaming_direct(
+                    raw_datasets, data_args, tokenizer, block_size, column_names, is_main_process
+                )
+        else:
+            # ========== 流模式 ==========
+            # 数据不落盘，按需从源头读取，适用于超大规模数据集
+            # 流模式下无缓存文件，因此 main_process_first 实际上无作用
+            if training_args.group_by_length:
+                lm_datasets = _preprocess_dataset_streaming_group_by_length(
+                    raw_datasets, tokenizer, block_size, column_names
+                )
+            else:
+                lm_datasets = _preprocess_dataset_streaming_direct(
+                    raw_datasets, tokenizer, block_size, column_names
+                )
+
+    return lm_datasets, is_main_process
+
+
+def _prepare_train_dataset(lm_datasets, data_args, tokenizer, training_args, is_main_process):
+    """
+    准备训练数据集
+
+    Args:
+        lm_datasets: 预处理后的数据集
+        data_args: 数据参数
+        tokenizer: 分词器
+        training_args: 训练参数
+        is_main_process: 是否为主进程
+
+    Returns:
+        tuple: (train_dataset, max_train_samples)
+    """
+    train_dataset = None
+    max_train_samples = 0
+
+    if not training_args.do_train:
+        return train_dataset, max_train_samples
+
+    if "train" not in lm_datasets:
+        raise ValueError("--do_train需要训练数据集")
+
+    train_dataset = lm_datasets['train']
+    max_train_samples = len(train_dataset)
+
+    if data_args.max_train_samples is not None and data_args.max_train_samples > 0:
+        max_train_samples = min(len(train_dataset), data_args.max_train_samples)
+        train_dataset = train_dataset.select(range(max_train_samples))
+
+    if is_main_process:
+        logger.debug(f"训练样本数量: {len(train_dataset)}")
+        logger.debug("分词后的训练示例:")
+        logger.debug(tokenizer.decode(train_dataset[0]['input_ids']))
+
+    return train_dataset, max_train_samples
+
+
+def _prepare_eval_dataset(lm_datasets, data_args, tokenizer, training_args, is_main_process):
+    """
+    准备评估数据集
+
+    Args:
+        lm_datasets: 预处理后的数据集
+        data_args: 数据参数
+        tokenizer: 分词器
+        training_args: 训练参数
+        is_main_process: 是否为主进程
+
+    Returns:
+        tuple: (eval_dataset, max_eval_samples)
+    """
+    eval_dataset = None
+    max_eval_samples = 0
+
+    if not training_args.do_eval:
+        return eval_dataset, max_eval_samples
+
+    if "validation" not in lm_datasets:
+        raise ValueError("--do_eval需要验证数据集")
+
+    eval_dataset = lm_datasets["validation"]
+    max_eval_samples = len(eval_dataset)
+
+    if data_args.max_eval_samples is not None and data_args.max_eval_samples > 0:
+        max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
+        eval_dataset = eval_dataset.select(range(max_eval_samples))
+
+    if is_main_process:
+        logger.debug(f"评估样本数量: {len(eval_dataset)}")
+        logger.debug("分词后的评估示例:")
+        logger.debug(tokenizer.decode(eval_dataset[0]['input_ids']))
+
+    return eval_dataset, max_eval_samples
 
 
 def preprocess_datasets(raw_datasets, data_args, tokenizer, block_size, training_args):
@@ -874,124 +1459,17 @@ def preprocess_datasets(raw_datasets, data_args, tokenizer, block_size, training
             - max_train_samples: 最大训练样本数
             - max_eval_samples: 最大评估样本数
     """
-    # 获取数据集的列名，用于后续移除原始文本列，只保留tokenized后的数据
-    if training_args.do_train:
-        column_names = list(raw_datasets["train"].features)
-    else:
-        column_names = list(raw_datasets["validation"].features)
+    lm_datasets, is_main_process = _tokenize_and_group_datasets(
+        raw_datasets, data_args, tokenizer, block_size, training_args
+    )
 
-    # 判断是否为主进程（用于分布式训练，避免重复处理）
-    is_main_process = training_args.local_rank in [-1, 0]
-    lm_datasets = {}  # 存储预处理后的语言模型数据集
+    train_dataset, max_train_samples = _prepare_train_dataset(
+        lm_datasets, data_args, tokenizer, training_args, is_main_process
+    )
 
-    # 在主进程优先的情况下进行数据集分词和分组
-    # 这确保了在分布式训练中，只有主进程执行缓存操作，其他进程等待
-    with training_args.main_process_first(desc="数据集分词和分组"):
-        if not data_args.streaming:
-            # ===== 非流模式处理（适用于数据集可以完全加载到内存的情况） =====
-            if training_args.group_by_length:
-                # 按长度分组模式：先将文本分词但不填充，再按长度分组
-                # 这种方式可以提高训练效率，减少padding浪费
-                for split in ["train", "validation"]:
-                    if split in raw_datasets:
-                        # 第一步：分词但不进行padding
-                        tokenized_dataset = raw_datasets[split].map(
-                            lambda examples: tokenize_wo_pad_function(tokenizer, examples),
-                            batched=True,  # 批量处理提高效率
-                            num_proc=data_args.preprocessing_num_workers,  # 多进程并行处理
-                            remove_columns=column_names,  # 移除原始列，只保留tokenized数据
-                            load_from_cache_file=not data_args.overwrite_cache,  # 是否加载缓存
-                            desc=f"在{split}数据集上运行分词器" if is_main_process else None,
-                        )
-                        # 第二步：将分词后的数据按block_size分组
-                        lm_datasets[split] = tokenized_dataset.map(
-                            lambda examples: group_text_function(examples, block_size),
-                            batched=True,
-                            num_proc=data_args.preprocessing_num_workers,
-                            load_from_cache_file=not data_args.overwrite_cache,
-                            desc=f"将{split}数据集分组成{block_size}大小的块",
-                        )
-            else:
-                # 直接分词并填充模式：一步完成分词和padding到block_size
-                for split in ["train", "validation"]:
-                    if split in raw_datasets:
-                        lm_datasets[split] = raw_datasets[split].map(
-                            lambda examples: tokenize_function(tokenizer, examples, block_size),
-                            batched=True,
-                            num_proc=data_args.preprocessing_num_workers,
-                            remove_columns=column_names,
-                            load_from_cache_file=not data_args.overwrite_cache,
-                            desc=f"在{split}数据集上运行分词器" if is_main_process else None,
-                        )
-        else:
-            # ===== 流模式处理（适用于大型数据集，无法完全加载到内存的情况） =====
-            # 流模式不支持多进程处理，因为数据是逐批加载的
-            if training_args.group_by_length:
-                # 按长度分组模式：先分词不填充，再分组
-                for split in ["train", "validation"]:
-                    if split in raw_datasets:
-                        tokenized_dataset = raw_datasets[split].map(
-                            lambda examples: tokenize_wo_pad_function(tokenizer, examples),
-                            batched=True,
-                            remove_columns=column_names,
-                        )
-                        lm_datasets[split] = tokenized_dataset.map(
-                            lambda examples: group_text_function(examples, block_size),
-                            batched=True,
-                        )
-            else:
-                # 直接分词并填充模式
-                for split in ["train", "validation"]:
-                    if split in raw_datasets:
-                        lm_datasets[split] = raw_datasets[split].map(
-                            lambda examples: tokenize_function(tokenizer, examples, block_size),
-                            batched=True,
-                            remove_columns=column_names,
-                        )
-
-    # ===== 设置训练数据集 =====
-    train_dataset = None
-    max_train_samples = 0
-    if training_args.do_train:
-        # 检查训练数据集是否存在
-        if "train" not in lm_datasets:
-            raise ValueError("--do_train需要训练数据集")
-
-        train_dataset = lm_datasets['train']
-        max_train_samples = len(train_dataset)
-
-        # 如果用户指定了最大训练样本数，进行截断（用于快速测试或调试）
-        if data_args.max_train_samples is not None and data_args.max_train_samples > 0:
-            max_train_samples = min(len(train_dataset), data_args.max_train_samples)
-            train_dataset = train_dataset.select(range(max_train_samples))
-
-        # 在主进程中打印调试信息
-        if is_main_process:
-            logger.debug(f"训练样本数量: {len(train_dataset)}")
-            logger.debug("分词后的训练示例:")
-            logger.debug(tokenizer.decode(train_dataset[0]['input_ids']))
-
-    # ===== 设置评估数据集 =====
-    eval_dataset = None
-    max_eval_samples = 0
-    if training_args.do_eval:
-        # 检查评估数据集是否存在
-        if "validation" not in lm_datasets:
-            raise ValueError("--do_eval需要验证数据集")
-
-        eval_dataset = lm_datasets["validation"]
-        max_eval_samples = len(eval_dataset)
-
-        # 如果用户指定了最大评估样本数，进行截断
-        if data_args.max_eval_samples is not None and data_args.max_eval_samples > 0:
-            max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
-            eval_dataset = eval_dataset.select(range(max_eval_samples))
-
-        # 在主进程中打印调试信息
-        if is_main_process:
-            logger.debug(f"评估样本数量: {len(eval_dataset)}")
-            logger.debug("分词后的评估示例:")
-            logger.debug(tokenizer.decode(eval_dataset[0]['input_ids']))
+    eval_dataset, max_eval_samples = _prepare_eval_dataset(
+        lm_datasets, data_args, tokenizer, training_args, is_main_process
+    )
 
     return train_dataset, eval_dataset, max_train_samples, max_eval_samples
 
@@ -1011,6 +1489,31 @@ def setup_trainer(model, tokenizer, training_args, train_dataset, eval_dataset):
         tuple: (trainer, ddp)
             - trainer: SaveModelTrainer训练器实例
             - ddp: 布尔值，是否使用分布式数据并行(DDP)
+
+    数据并行机制总结：
+        这段代码涉及的数据并行实现方式：
+
+        1. DDP（DistributedDataParallel）- 高效并行方案：
+           - 触发条件: 使用torchrun/accelerate启动，设置WORLD_SIZE > 1
+           - 实现方式: Trainer内部自动检测并初始化DDP
+           - 数据分发: 训练时自动将数据集分片到各个GPU
+           - 梯度同步: 通过NCCL/后端自动同步各GPU的梯度
+           - 效率: 高，每个GPU独立的前向/反向传播
+
+        2. DataParallel - 兼容方案：
+           - 触发条件: 单进程多GPU（not ddp && 多张GPU）
+           - 实现方式: 设置is_parallelizable=True，Trainer使用DP
+           - 数据分发: 主进程分割batch到各GPU
+           - 梯度同步: 主进程收集各GPU梯度并更新
+           - 效率: 较低，主进程成为瓶颈
+
+        3. Trainer内部的数据并行实现：
+           - 训练时，Trainer调用get_train_dataloader()创建数据加载器
+           - DDP模式下：使用DistributedSampler对数据集进行分片
+           - 每个进程只能访问到自己负责的数据分片
+           - 自动处理batch_size的调整（per_device_batch_size）
+
+        推荐做法：使用DDP（通过torchrun或accelerate launch启动）
     """
     # ========== 数据并行设置检测 ==========
     # WORLD_SIZE是分布式训练环境变量，表示总进程数
@@ -1018,6 +1521,7 @@ def setup_trainer(model, tokenizer, training_args, train_dataset, eval_dataset):
     # 例如：torchrun --nproc_per_node=4 表示4个进程，WORLD_SIZE=4
     # 默认值为"1"表示单进程单卡训练
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
+
     # ddp=True表示启用分布式数据并行(DistributedDataParallel, DDP)
     # DDP是PyTorch提供的跨多GPU的数据并行方案，每个GPU上有独立的模型副本
     ddp = world_size != 1
@@ -1087,31 +1591,6 @@ def setup_trainer(model, tokenizer, training_args, train_dataset, eval_dataset):
     # 例如：DDP模式下，只有rank 0进程需要保存模型
     return trainer, ddp
 
-    # ========== 数据并行机制总结 ==========
-    # 这段代码涉及的数据并行实现方式：
-    #
-    # 1. DDP（DistributedDataParallel）- 高效并行方案：
-    #    - 触发条件: 使用torchrun/accelerate启动，设置WORLD_SIZE > 1
-    #    - 实现方式: Trainer内部自动检测并初始化DDP
-    #    - 数据分发: 训练时自动将数据集分片到各个GPU
-    #    - 梯度同步: 通过NCCL/后端自动同步各GPU的梯度
-    #    - 效率: 高，每个GPU独立的前向/反向传播
-    #
-    # 2. DataParallel - 兼容方案：
-    #    - 触发条件: 单进程多GPU（not ddp && 多张GPU）
-    #    - 实现方式: 设置is_parallelizable=True，Trainer使用DP
-    #    - 数据分发: 主进程分割batch到各GPU
-    #    - 梯度同步: 主进程收集各GPU梯度并更新
-    #    - 效率: 较低，主进程成为瓶颈
-    #
-    # 3. Trainer内部的数据并行实现：
-    #    - 训练时，Trainer调用get_train_dataloader()创建数据加载器
-    #    - DDP模式下：使用DistributedSampler对数据集进行分片
-    #    - 每个进程只能访问到自己负责的数据分片
-    #    - 自动处理batch_size的调整（per_device_batch_size）
-    #
-    # 推荐做法：使用DDP（通过torchrun或accelerate launch启动）
-
 
 def train_model(trainer, max_train_samples, training_args):
     """
@@ -1127,32 +1606,33 @@ def train_model(trainer, max_train_samples, training_args):
     """
     # 记录训练开始信息
     logger.info("*** 开始增量预训练 ***")
-    
+
     # 获取并记录训练数据加载器中的示例样本，用于数据格式调试
     sample_data = next(iter(trainer.get_train_dataloader()))
     logger.debug(f"训练数据加载器示例: {sample_data}")
-    
+
     # 初始化检查点路径，支持断点续训功能
     checkpoint = None
     if training_args.resume_from_checkpoint is not None:
         checkpoint = training_args.resume_from_checkpoint
         logger.info(f"从检查点恢复训练: {checkpoint}")
-    
+
     # 执行模型训练，传入检查点路径以支持断点续训
     train_result = trainer.train(resume_from_checkpoint=checkpoint)
 
     # 获取训练结果指标
     metrics = train_result.metrics
-    
+
     # 添加训练样本数量到指标中，便于后续分析
     metrics["train_samples"] = max_train_samples
-    
+
     # 将训练指标记录到日志中，便于监控训练过程
     trainer.log_metrics("train", metrics)
-    
+
     # 将训练指标保存到文件中，便于后续分析和可视化
+    # 保存路径是: {output_dir}/trainer_state.json
     trainer.save_metrics("train", metrics)
-    
+
     # 保存训练器状态，包括模型权重、优化器状态、学习率调度器状态等
     trainer.save_state()
 
