@@ -1148,7 +1148,73 @@ def load_datasets(data_args, model_args):
 
 def process_train_dataset(train_dataset, data_args, training_args, is_main_process, tokenizer, script_args,
                           IGNORE_INDEX, prompt_template):
-    """处理训练数据集"""
+    """
+    处理训练数据集，将原始对话数据转换为模型训练所需的格式
+
+    功能说明：
+    - 支持数据集样本数量限制（用于调试或快速训练）
+    - 使用主进程优先的tokenization，避免分布式训练中的重复处理
+    - 将对话数据转换为input_ids、attention_mask、labels格式
+    - 过滤掉无效样本（标签全为IGNORE_INDEX的样本）
+
+    参数说明：
+    - train_dataset: 原始训练数据集，包含conversations字段
+    - data_args: 数据参数对象，包含max_train_samples、overwrite_cache等配置
+    - training_args: 训练参数对象，用于分布式训练控制
+    - is_main_process: 是否为主进程的布尔值
+    - tokenizer: 分词器对象，用于文本编码
+    - script_args: 脚本参数配置，包含model_max_length等
+    - IGNORE_INDEX: 忽略索引值（通常是-100），用于mask不参与loss计算的token
+    - prompt_template: 提示词模板对象，用于格式化对话
+
+    输入样例：
+    ```python
+    train_dataset = [
+        {
+            "conversations": [
+                {"from": "human", "value": "治疗阳痿吃什么药呢？"},
+                {"from": "gpt", "value": "男子早泄、早泄病症的再次发生，多由恣情纵欲..."}
+            ]
+        },
+        {
+            "conversations": [
+                {"from": "human", "value": "两只脚明显大小不一样，该怎么办？"},
+                {"from": "gpt", "value": "与走路姿势没有关系的，人的器官，没有完全对称的..."}
+            ]
+        }
+    ]
+    data_args.max_train_samples = 100
+    data_args.overwrite_cache = False
+    is_main_process = True
+    script_args.model_max_length = 512
+    script_args.train_on_inputs = False
+    IGNORE_INDEX = -100
+    ```
+
+    输出样例：
+    ```python
+    train_dataset = [
+        {
+            "input_ids": [151644, 8948, 198, 2610, 314, 1024, 316, 311, 816, 362, 536, 950, 1093, 311, 290,
+                         151645, 11023, 1047, 274, 696, 4472, 402, 311, 398, 277, 293, 264, 9189, 381, 284,
+                         267, 6956, 311, 293, 267, 756, 277, 300, 374, 310, 273, 385, 311, 354, 151645],
+            "attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                             1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            "labels": [-100, -100, -100, -100, -100, -100, -100, -100, -100, -100, -100, -100, -100, -100, -100,
+                      11023, 1047, 274, 696, 4472, 402, 311, 398, 277, 293, 264, 9189, 381, 284, 267, 6956,
+                      311, 293, 267, 756, 277, 300, 374, 310, 273, 385, 311, 354, 151645]
+        },
+        ...
+    ]
+    max_train_samples = 2
+
+    说明：
+    - input_ids: 格式化后的对话token序列，包含ChatML格式的特殊标记
+    - attention_mask: 全为1的序列，表示所有token都参与attention计算
+    - labels: 用户输入部分（前缀部分）为IGNORE_INDEX(-100)，模型回复部分保留真实token_id
+    - max_train_samples: 实际使用的训练样本数量（受max_train_samples限制）
+    ```
+    """
     # 获取训练数据集的总样本数
     max_train_samples = len(train_dataset)
 
