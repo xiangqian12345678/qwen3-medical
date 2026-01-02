@@ -50,16 +50,6 @@ class ScriptArguments:
         metadata={"help": "训练样本数量，-1 表示使用全部样本。"}
     )
 
-    subset_name: Optional[str] = field(
-        default="main",
-        metadata={"help": "数据集子集名称，例如 'default'、'main'，默认为 'default'。"}
-    )
-
-    dataset_splits: Optional[str] = field(
-        default="train",
-        metadata={"help": "数据集分割名称，如 'train'、'validation' 或 'test'。"}
-    )
-
     validation_split_percentage: Optional[int] = field(
         default=10,
         metadata={"help": "当没有验证集时，从训练集中划分验证集的百分比，默认为10%。"}
