@@ -1,4 +1,3 @@
-
 import os
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -17,7 +16,6 @@ from transformers import (
     TrainingArguments,
     BitsAndBytesConfig,
 )
-from transformers.integrations import is_deepspeed_zero3_enabled
 from trl import DPOTrainer, DPOConfig
 
 from template import get_conv_template
@@ -76,10 +74,10 @@ class DatasetArguments:
     数据集相关参数，包括数据源、长度限制、预处理等
     """
     dataset_name: Optional[str] = field(
-        default=None, metadata={"help": "使用 HuggingFace datasets 库加载数据集的名称。"}
+        default=None, metadata={"help": "使用 HuggingFace datasets 库加载数据集的名称列表，逗号隔开。"}
     )
     dataset_config_name: Optional[str] = field(
-        default=None, metadata={"help": "数据集的配置名称。"}
+        default=None, metadata={"help": "数据集的配置名称列表，逗号隔开。"}
     )
     train_file_dir: Optional[str] = field(default=None, metadata={"help": "训练数据的jsonl文件目录。"})
     validation_file_dir: Optional[str] = field(default=None, metadata={"help": "验证数据的jsonl文件目录。"})
@@ -112,46 +110,195 @@ class DatasetArguments:
 @dataclass
 class TrainingArguments:
     """
-    训练相关参数，包括优化器配置、LoRA设置、训练策略等
+    训练相关参数配置（TrainingArguments）
+    -------------------------------------------------
+    该类用于统一管理大模型训练过程中的所有关键超参数，
+    覆盖：
+    - PEFT / LoRA / QLoRA 参数高效微调
+    - 优化器与学习率调度
+    - 混合精度与显存优化
+    - 训练 / 评估 / 保存策略
+    - 分布式与 DeepSpeed 支持
     """
-    use_peft: bool = field(default=True, metadata={"help": "是否使用PEFT（参数高效微调）。"})
-    qlora: bool = field(default=False, metadata={"help": "是否使用QLoRA量化微调。"})
-    target_modules: Optional[str] = field(default=None, metadata={"help": "LoRA微调目标模块名称。"})
-    lora_rank: Optional[int] = field(default=8, metadata={"help": "LoRA矩阵的秩。"})
-    lora_dropout: Optional[float] = field(default=0.05, metadata={"help": "LoRA的dropout概率。"})
-    lora_alpha: Optional[float] = field(default=16.0, metadata={"help": "LoRA的缩放系数alpha。"})
-    peft_path: Optional[str] = field(default=None, metadata={"help": "PEFT模型路径，可加载已有微调模型。"})
-    do_train: bool = field(default=False, metadata={"help": "是否执行训练过程。"})
-    do_eval: bool = field(default=False, metadata={"help": "是否在验证集上执行评估。"})
-    learning_rate: Optional[float] = field(default=5e-4, metadata={"help": "学习率。"})
-    lr_scheduler_type: Optional[str] = field(default="cosine", metadata={"help": "学习率调度类型，如cosine。"})
-    warmup_steps: Optional[int] = field(default=100, metadata={"help": "预热步数。"})
-    weight_decay: Optional[float] = field(default=0.05, metadata={"help": "权重衰减系数。"})
-    adam_beta1: Optional[float] = field(default=0.9, metadata={"help": "Adam优化器的beta1参数。"})
-    adam_beta2: Optional[float] = field(default=0.95, metadata={"help": "Adam优化器的beta2参数。"})
-    optim: Optional[str] = field(default="adamw_torch", metadata={"help": "优化器类型。"})
-    fp16: Optional[bool] = field(default=True, metadata={"help": "是否使用FP16训练。"})
-    bf16: Optional[bool] = field(default=False, metadata={"help": "是否使用BF16训练。"})
+
+    # =========================
+    # 1. PEFT / LoRA / QLoRA 配置
+    # =========================
+
+    use_peft: bool = field(
+        default=True,
+        metadata={"help": "是否启用 PEFT（参数高效微调，如 LoRA）。True 表示不做全参数微调。"}
+    )
+
+    qlora: bool = field(
+        default=False,
+        metadata={"help": "是否使用 QLoRA（4bit/8bit 量化 + LoRA）。可显著降低显存占用，但训练更敏感。"}
+    )
+
+    target_modules: Optional[str] = field(
+        default=None,
+        metadata={"help": "LoRA 注入的目标模块名称，如 q_proj,k_proj,v_proj,o_proj。"}
+    )
+
+    lora_rank: Optional[int] = field(
+        default=8,
+        metadata={"help": "LoRA 矩阵的秩（rank），决定 LoRA 的容量和参数量。常见 8~16。"}
+    )
+
+    lora_dropout: Optional[float] = field(
+        default=0.05,
+        metadata={"help": "LoRA 分支的 dropout 概率，用于防止过拟合。"}
+    )
+
+    lora_alpha: Optional[float] = field(
+        default=16.0,
+        metadata={"help": "LoRA 缩放系数 alpha，实际生效比例为 alpha / rank。"}
+    )
+
+    peft_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "已有 PEFT/LoRA 权重路径，用于继续训练或加载已微调模型。"}
+    )
+
+    # =========================
+    # 2. 训练 / 评估开关
+    # =========================
+
+    do_train: bool = field(
+        default=False,
+        metadata={"help": "是否执行训练过程。False 时仅加载模型或做推理。"}
+    )
+
+    do_eval: bool = field(
+        default=False,
+        metadata={"help": "是否在验证集上执行评估（eval）。"}
+    )
+
+    # =========================
+    # 3. 学习率与优化器配置
+    # =========================
+
+    learning_rate: Optional[float] = field(
+        default=5e-4,
+        metadata={"help": "学习率。LoRA 微调通常在 1e-4 ~ 5e-4 之间。"}
+    )
+
+    lr_scheduler_type: Optional[str] = field(
+        default="cosine",
+        metadata={"help": "学习率调度器类型，如 linear / cosine / constant。"}
+    )
+
+    warmup_steps: Optional[int] = field(
+        default=100,
+        metadata={"help": "学习率预热步数，用于防止训练初期梯度不稳定。"}
+    )
+
+    weight_decay: Optional[float] = field(
+        default=0.05,
+        metadata={"help": "权重衰减系数（L2 正则），对 LoRA 参数同样生效。"}
+    )
+
+    adam_beta1: Optional[float] = field(
+        default=0.9,
+        metadata={"help": "Adam 优化器 beta1 参数，控制一阶动量。"}
+    )
+
+    adam_beta2: Optional[float] = field(
+        default=0.95,
+        metadata={"help": "Adam 优化器 beta2 参数，0.95 比默认 0.999 更适合大模型。"}
+    )
+
+    optim: Optional[str] = field(
+        default="adamw_torch",
+        metadata={"help": "优化器类型，如 adamw_torch、paged_adamw_8bit（QLoRA 推荐）。"}
+    )
+
+    # =========================
+    # 4. 混合精度与显存优化
+    # =========================
+
+    fp16: Optional[bool] = field(
+        default=True,
+        metadata={"help": "是否启用 FP16 混合精度训练。"}
+    )
+
+    bf16: Optional[bool] = field(
+        default=False,
+        metadata={"help": "是否启用 BF16 混合精度（需要 A100/H100 等硬件）。"}
+    )
+
     gradient_checkpointing: Optional[bool] = field(
-        default=True, metadata={"help": "是否启用梯度检查点以节省显存。"}
+        default=True,
+        metadata={"help": "是否启用梯度检查点，用计算换显存，大模型强烈推荐开启。"}
     )
+
     gradient_accumulation_steps: Optional[int] = field(
-        default=4, metadata={"help": "梯度累积步数，相当于增大batch size。"}
+        default=4,
+        metadata={"help": "梯度累积步数，用于模拟更大的 batch size。"}
     )
-    save_steps: Optional[int] = field(default=50, metadata={"help": "每隔多少步保存一次模型。"})
-    eval_steps: Optional[int] = field(default=50, metadata={"help": "每隔多少步进行一次评估。"})
-    logging_steps: Optional[int] = field(default=1, metadata={"help": "每隔多少步记录一次日志。"})
-    output_dir: Optional[str] = field(default="outputs-dpo", metadata={"help": "模型输出保存目录。"})
-    overwrite_output_dir: bool = field(default=True, metadata={"help": "是否覆盖输出目录。"})
-    max_steps: Optional[int] = field(default=200, metadata={"help": "训练总步数。"})
-    eval_strategy: Optional[str] = field(default="steps", metadata={"help": "评估策略，如按步数或按epoch。"})
+
+    # =========================
+    # 5. 训练过程控制（保存 / 评估 / 日志）
+    # =========================
+
+    save_steps: Optional[int] = field(
+        default=50,
+        metadata={"help": "每隔多少训练步保存一次模型 checkpoint。"}
+    )
+
+    eval_steps: Optional[int] = field(
+        default=50,
+        metadata={"help": "每隔多少训练步在验证集上进行一次评估。"}
+    )
+
+    logging_steps: Optional[int] = field(
+        default=1,
+        metadata={"help": "每隔多少步记录一次训练日志（loss / lr 等）。"}
+    )
+
+    output_dir: Optional[str] = field(
+        default="outputs-dpo",
+        metadata={"help": "模型、日志和 checkpoint 的输出目录。"}
+    )
+
+    overwrite_output_dir: bool = field(
+        default=True,
+        metadata={"help": "是否覆盖已有输出目录，开启会清空旧结果。"}
+    )
+
+    max_steps: Optional[int] = field(
+        default=200,
+        metadata={"help": "最大训练步数，优先级高于 num_train_epochs。"}
+    )
+
+    eval_strategy: Optional[str] = field(
+        default="steps",
+        metadata={"help": "评估策略：steps（按步）或 epoch（按轮）。"}
+    )
+
     remove_unused_columns: Optional[bool] = field(
         default=False,
-        metadata={"help": "如果使用datasets.Dataset，是否移除未使用的列。"},
+        metadata={"help": "是否移除 dataset 中未使用的列。DPO / PPO 场景必须为 False。"}
     )
-    report_to: Optional[str] = field(default="tensorboard", metadata={"help": "日志上报平台，如wandb或tensorboard。"})
-    deepspeed: Optional[str] = field(default=None, metadata={"help": "DeepSpeed配置文件路径。"})
-    local_rank: int = field(default=-1, metadata={"help": "本地进程排名，用于分布式训练。"})
+
+    report_to: Optional[str] = field(
+        default="tensorboard",
+        metadata={"help": "日志上报平台，如 tensorboard / wandb / none。"}
+    )
+
+    # =========================
+    # 6. 分布式训练与 DeepSpeed
+    # =========================
+
+    deepspeed: Optional[str] = field(
+        default=None,
+        metadata={"help": "DeepSpeed 配置文件路径（如 ZeRO-2 / ZeRO-3）。"}
+    )
+
+    local_rank: int = field(
+        default=-1,
+        metadata={"help": "本地进程编号，由 torchrun / deepspeed 自动注入。"}
+    )
 
 
 @dataclass
@@ -172,191 +319,191 @@ class ScriptArguments:
     @property
     def model_name_or_path(self):
         return self.model_args.model_name_or_path
-    
+
     @property
     def tokenizer_name_or_path(self):
         return self.model_args.tokenizer_name_or_path
-    
+
     @property
     def load_in_8bit(self):
         return self.model_args.load_in_8bit
-    
+
     @property
     def load_in_4bit(self):
         return self.model_args.load_in_4bit
-    
+
     @property
     def cache_dir(self):
         return self.model_args.cache_dir
-    
+
     @property
     def use_fast_tokenizer(self):
         return self.model_args.use_fast_tokenizer
-    
+
     @property
     def dtype(self):
         return self.model_args.dtype
-    
+
     @property
     def device_map(self):
         return self.model_args.device_map
-    
+
     @property
     def trust_remote_code(self):
         return self.model_args.trust_remote_code
-    
+
     @property
     def dataset_name(self):
         return self.dataset_args.dataset_name
-    
+
     @property
     def dataset_config_name(self):
         return self.dataset_args.dataset_config_name
-    
+
     @property
     def train_file_dir(self):
         return self.dataset_args.train_file_dir
-    
+
     @property
     def validation_file_dir(self):
         return self.dataset_args.validation_file_dir
-    
+
     @property
     def template_name(self):
         return self.dataset_args.template_name
-    
+
     @property
     def per_device_train_batch_size(self):
         return self.dataset_args.per_device_train_batch_size
-    
+
     @property
     def per_device_eval_batch_size(self):
         return self.dataset_args.per_device_eval_batch_size
-    
+
     @property
     def max_source_length(self):
         return self.dataset_args.max_source_length
-    
+
     @property
     def max_target_length(self):
         return self.dataset_args.max_target_length
-    
+
     @property
     def min_target_length(self):
         return self.dataset_args.min_target_length
-    
+
     @property
     def max_train_samples(self):
         return self.dataset_args.max_train_samples
-    
+
     @property
     def max_eval_samples(self):
         return self.dataset_args.max_eval_samples
-    
+
     @property
     def overwrite_cache(self):
         return self.dataset_args.overwrite_cache
-    
+
     @property
     def validation_split_percentage(self):
         return self.dataset_args.validation_split_percentage
-    
+
     @property
     def preprocessing_num_workers(self):
         return self.dataset_args.preprocessing_num_workers
-    
+
     @property
     def use_peft(self):
         return self.training_args.use_peft
-    
+
     @property
     def qlora(self):
         return self.training_args.qlora
-    
+
     @property
     def target_modules(self):
         return self.training_args.target_modules
-    
+
     @property
     def lora_rank(self):
         return self.training_args.lora_rank
-    
+
     @property
     def lora_dropout(self):
         return self.training_args.lora_dropout
-    
+
     @property
     def lora_alpha(self):
         return self.training_args.lora_alpha
-    
+
     @property
     def peft_path(self):
         return self.training_args.peft_path
-    
+
     @property
     def do_train(self):
         return self.training_args.do_train
-    
+
     @property
     def do_eval(self):
         return self.training_args.do_eval
-    
+
     @property
     def learning_rate(self):
         return self.training_args.learning_rate
-    
+
     @property
     def lr_scheduler_type(self):
         return self.training_args.lr_scheduler_type
-    
+
     @property
     def warmup_steps(self):
         return self.training_args.warmup_steps
-    
+
     @property
     def weight_decay(self):
         return self.training_args.weight_decay
-    
+
     @property
     def adam_beta1(self):
         return self.training_args.adam_beta1
-    
+
     @property
     def adam_beta2(self):
         return self.training_args.adam_beta2
-    
+
     @property
     def optim(self):
         return self.training_args.optim
-    
+
     @property
     def fp16(self):
         return self.training_args.fp16
-    
+
     @property
     def bf16(self):
         return self.training_args.bf16
-    
+
     @property
     def gradient_checkpointing(self):
         return self.training_args.gradient_checkpointing
-    
+
     @property
     def gradient_accumulation_steps(self):
         return self.training_args.gradient_accumulation_steps
-    
+
     @property
     def save_steps(self):
         return self.training_args.save_steps
-    
+
     @property
     def eval_steps(self):
         return self.training_args.eval_steps
-    
+
     @property
     def logging_steps(self):
         return self.training_args.logging_steps
-    
+
     @property
     def output_dir(self):
         return self.training_args.output_dir
@@ -368,23 +515,23 @@ class ScriptArguments:
     @property
     def max_steps(self):
         return self.training_args.max_steps
-    
+
     @property
     def eval_strategy(self):
         return self.training_args.eval_strategy
-    
+
     @property
     def remove_unused_columns(self):
         return self.training_args.remove_unused_columns
-    
+
     @property
     def report_to(self):
         return self.training_args.report_to
-    
+
     @property
     def deepspeed(self):
         return self.training_args.deepspeed
-    
+
     @property
     def local_rank(self):
         return self.training_args.local_rank
@@ -443,7 +590,7 @@ def parse_args():
     """
     parser = HfArgumentParser((ModelArguments, DatasetArguments, TrainingArguments))
     model_args, dataset_args, training_args = parser.parse_args_into_dataclasses()
-    
+
     # 组合所有参数到主参数类
     args = ScriptArguments(
         model_args=model_args,
@@ -508,6 +655,7 @@ def load_tokenizer_and_template(args):
         tokenizer.pad_token = tokenizer.unk_token or tokenizer.eos_token
 
     return tokenizer, prompt_template
+
 
 # =========================================================
 # 工具函数
@@ -614,11 +762,11 @@ def load_from_hf_hub(args) -> Optional[DatasetDict]:
     若未配置或加载失败，返回 None
     """
     dataset_names = parse_comma_list(args.dataset_name)
-    
+
     # 如果没有指定数据集名称，直接返回 None
     if not dataset_names:
         return None
-        
+
     # 处理 dataset_config_name 可能为 None 的情况
     if args.dataset_config_name is None:
         dataset_configs = [None] * len(dataset_names)
@@ -753,8 +901,6 @@ def load_raw_datasets(args) -> DatasetDict:
     return raw_datasets
 
 
-
-
 # =========================================================
 # DPO 数据集构建（核心）
 # =========================================================
@@ -818,21 +964,133 @@ def build_dpo_datasets(args, raw_datasets, prompt_template):
         - train_dataset 和 eval_dataset 可以直接输入 DPOTrainer。
     """
 
-
     max_length = args.max_source_length + args.max_target_length
 
     def build_prompt_and_responses(examples) -> Dict[str, str]:
         """
-        将 system + history + question 拼接成最终 prompt
+        基于 Qwen 官方对话模板，构造 DPO / Reward Model 训练所需数据。
+
+        使用的 Qwen Conversation 模板如下（逻辑等价）：
+        ------------------------------------------------
+        Conversation(
+            name="qwen",
+            system_prompt="<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n",
+            roles=("user", "assistant"),
+            prompt="<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n",
+            sep="\n",
+            stop_str="<|im_end|>",
+        )
+
+        本函数的作用：
+        ------------------------------------------------
+        1. 将 system + 多轮 history + 当前 question 拼接为一个完整 prompt
+        2. prompt 严格符合 Qwen 的 <|im_start|> / <|im_end|> 标记规范
+        3. 输出 prompt / chosen / rejected，用于 DPO、GRPO、RM 训练
+
+        参数说明：
+        ------------------------------------------------
+        examples: Dict[str, List]
+            datasets.map(batched=True) 传入的批量样本，必须包含：
+            - system
+            - history
+            - question
+            - response_chosen
+            - response_rejected
+
+        history 数据结构约定：
+        ------------------------------------------------
+        history 是多轮对话列表，每一轮为：
+            [user_text, assistant_text]
+
+        例如：
+            history = [
+                ["你好", "你好，我是你的助手"],
+                ["什么是糖尿病？", "糖尿病是一种代谢性疾病"]
+            ]
+
+        当前 question 不在 history 中，需要额外拼接，
+        并且 assistant 回复为空字符串，作为生成起点。
+
+        ============================
+        输入示例（examples）
+        ============================
+
+        examples = {
+            "system": [
+                "你是一名专业的医学助手"
+            ],
+            "history": [
+                [
+                    ["你好", "你好，我是你的医学助手"],
+                    ["什么是糖尿病？", "糖尿病是一种代谢性疾病"]
+                ]
+            ],
+            "question": [
+                "糖尿病有哪些常见并发症？"
+            ],
+            "response_chosen": [
+                "糖尿病常见并发症包括视网膜病变、肾病、神经病变和心血管疾病等。"
+            ],
+            "response_rejected": [
+                "糖尿病一般不会有什么并发症。"
+            ]
+        }
+
+        ============================
+        输出示例（文本格式结果）
+        ============================
+
+        返回值：
+
+        {
+            "prompt": [
+                "<|im_start|>system\n"
+                "你是一名专业的医学助手\n"
+                "<|im_end|>\n"
+                "<|im_start|>user\n"
+                "你好\n"
+                "<|im_end|>\n"
+                "<|im_start|>assistant\n"
+                "你好，我是你的医学助手\n"
+                "<|im_end|>\n"
+                "<|im_start|>user\n"
+                "什么是糖尿病？\n"
+                "<|im_end|>\n"
+                "<|im_start|>assistant\n"
+                "糖尿病是一种代谢性疾病\n"
+                "<|im_end|>\n"
+                "<|im_start|>user\n"
+                "糖尿病有哪些常见并发症？\n"
+                "<|im_end|>\n"
+                "<|im_start|>assistant\n"
+            ],
+            "chosen": [
+                "糖尿病常见并发症包括视网膜病变、肾病、神经病变和心血管疾病等。"
+            ],
+            "rejected": [
+                "糖尿病一般不会有什么并发症。"
+            ]
+        }
+
+        说明：
+        ------------------------------------------------
+        - prompt 以 <|im_start|>assistant\n 结尾
+        - 模型将在此位置生成回答
+        - chosen / rejected 不包含任何 Qwen 特殊 token
         """
+
         prompts = []
+
         for system, history, question in zip(
-            examples["system"],
-            examples["history"],
-            examples["question"],
+                examples["system"],
+                examples["history"],
+                examples["question"],
         ):
             system_prompt = system or ""
             history = history or []
+
+            # 将当前 question 作为最后一轮 user
+            # assistant 留空，作为生成起点
             history_with_question = history + [[question, ""]]
 
             prompts.append(
@@ -869,7 +1127,7 @@ def build_dpo_datasets(args, raw_datasets, prompt_template):
         # 长度过滤（避免 OOM）
         ds = ds.filter(
             lambda x: 0 < len(x["prompt"] + x["chosen"]) <= max_length
-            and 0 < len(x["prompt"] + x["rejected"]) <= max_length
+                      and 0 < len(x["prompt"] + x["rejected"]) <= max_length
         )
         return ds
 
@@ -891,7 +1149,6 @@ def build_dpo_datasets(args, raw_datasets, prompt_template):
 # =========================================================
 # 模型加载（DDP / QLoRA / 梯度检查点）
 # =========================================================
-
 def load_model(args):
     """
     加载模型并处理：
@@ -916,8 +1173,10 @@ def load_model(args):
         # 单卡或多卡DDP模式
         world_size = int(os.environ.get("WORLD_SIZE", "1"))
         if world_size > 1:
+            # 单服务器&多 GPU
             device_map = {"": int(os.environ.get("LOCAL_RANK", 0))}
         else:
+            # 单服务器&单GPU
             device_map = args.device_map
 
     dtype = (
@@ -936,6 +1195,9 @@ def load_model(args):
     # QLoRA 量化配置
     quant_config = None
     if args.qlora:
+        # NF4 的核心思想：
+        #   模型权重近似服从 𝒩(0, σ²)，
+        #   用“正态分布感知”的 16 个值来表示 4 bit。
         quant_config = BitsAndBytesConfig(
             load_in_4bit=args.load_in_4bit,
             load_in_8bit=args.load_in_8bit,
@@ -945,13 +1207,13 @@ def load_model(args):
         )
 
     model = AutoModelForCausalLM.from_pretrained(
-        args.model_name_or_path,
-        config=config,
-        dtype=dtype,
-        device_map=device_map,
-        trust_remote_code=args.trust_remote_code,
-        low_cpu_mem_usage=True,
-        quantization_config=quant_config,
+        args.model_name_or_path,  # 模型路径或模型名（HuggingFace Hub 上的模型名或本地路径）
+        config=config,  # 模型配置对象（Config），控制模型的结构、超参数等
+        dtype=dtype,  # 指定模型权重的数据类型（如 torch.float16, torch.bfloat16, torch.float32）
+        device_map=device_map,  # 指定模型加载到的设备，如 'auto' 会自动分配到 CPU/GPU
+        trust_remote_code=args.trust_remote_code,  # 是否信任远程模型的自定义代码（比如 modeling_xxx.py）
+        low_cpu_mem_usage=True,  # 使用低 CPU 内存加载方式，减少 CPU RAM 占用，尤其是大模型
+        quantization_config=quant_config,  # 量化配置，用于加载 8bit/4bit 模型
     )
 
     # ------------------------------
@@ -994,14 +1256,6 @@ def build_dpo_trainer(args, model, tokenizer, train_dataset, eval_dataset):
     Returns:
         trainer (DPOTrainer)
     """
-    # DeepSpeed集成
-    deepspeed_config = None
-    if args.deepspeed is not None:
-        import json
-        with open(args.deepspeed, 'r') as f:
-            deepspeed_config = json.load(f)
-        logger.info(f"加载DeepSpeed配置: {args.deepspeed}")
-
     training_args = DPOConfig(
         # =========================
         # 序列长度相关
@@ -1019,7 +1273,6 @@ def build_dpo_trainer(args, model, tokenizer, train_dataset, eval_dataset):
         # 设置过大 → 显存 & 计算量爆炸
         max_length=args.max_source_length + args.max_target_length,
 
-
         # =========================
         # Batch 相关
         # =========================
@@ -1036,7 +1289,6 @@ def build_dpo_trainer(args, model, tokenizer, train_dataset, eval_dataset):
         # 用于在显存受限时模拟大 batch
         # 对 DPO 来说，batch 稳定性对 loss 很关键
         gradient_accumulation_steps=args.gradient_accumulation_steps,
-
 
         # =========================
         # 优化器 & 学习率
@@ -1063,7 +1315,6 @@ def build_dpo_trainer(args, model, tokenizer, train_dataset, eval_dataset):
         adam_beta1=args.adam_beta1,
         adam_beta2=args.adam_beta2,
 
-
         # =========================
         # 日志 & checkpoint
         # =========================
@@ -1073,7 +1324,6 @@ def build_dpo_trainer(args, model, tokenizer, train_dataset, eval_dataset):
         # 每隔多少 step 保存一次 checkpoint
         # DPO 训练建议不要太频繁（磁盘 + IO 压力大）
         save_steps=args.save_steps,
-
 
         # =========================
         # 评估相关
@@ -1088,7 +1338,6 @@ def build_dpo_trainer(args, model, tokenizer, train_dataset, eval_dataset):
         # 指定多少 step 进行一次评估
         eval_steps=args.eval_steps,
 
-
         # =========================
         # 精度相关
         # =========================
@@ -1099,7 +1348,6 @@ def build_dpo_trainer(args, model, tokenizer, train_dataset, eval_dataset):
         # 是否使用 fp16
         # 与 bf16 二选一，老 GPU 或不支持 bf16 时使用
         fp16=args.fp16,
-
 
         # =========================
         # 输出 & 运行信息
@@ -1130,8 +1378,10 @@ def build_dpo_trainer(args, model, tokenizer, train_dataset, eval_dataset):
         # DeepSpeed配置文件路径
         deepspeed=args.deepspeed,
 
-        # 是否在分布式训练中仅保存主节点模型
+        # 告诉 DDP 是否在反向传播时检查 未被使用的参数
         ddp_find_unused_parameters=False,
+
+        # "nccl"：NVIDIA 的 GPU 通信库，专为多 GPU 高效通信设计
         ddp_backend="nccl",
     )
 
@@ -1142,7 +1392,7 @@ def build_dpo_trainer(args, model, tokenizer, train_dataset, eval_dataset):
         if target_modules and 'all' in target_modules:
             target_modules = find_all_linear_names(model, int4=args.load_in_4bit, int8=args.load_in_8bit)
         logger.info(f"Peft target_modules: {target_modules}")
-        
+
         peft_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             r=args.lora_rank,

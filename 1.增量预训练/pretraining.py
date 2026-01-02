@@ -124,13 +124,11 @@ class DataArguments:
     """
     数据相关参数类：定义训练和评估数据的参数
     """
-
     dataset_name: Optional[str] = field(
-        default=None,
-        metadata={"help": "要使用的数据集名称（通过datasets库），例如： wikitext,Linly-AI/Chinese-pretraining-dataset"}
+        default=None, metadata={"help": "使用 HuggingFace datasets 库加载数据集的名称列表，逗号隔开。"}
     )
     dataset_config_name: Optional[str] = field(
-        default=None, metadata={"help": "要使用的数据集配置名称（通过datasets库），例如：wikitext-2-raw-v1,none"}
+        default=None, metadata={"help": "数据集的配置名称列表，逗号隔开。"}
     )
     train_file_dir: Optional[str] = field(default=None, metadata={"help": "训练文本数据文件文件夹"})
     validation_file_dir: Optional[str] = field(
@@ -1083,7 +1081,7 @@ def load_model_and_tokenizer(model_args):
 
 
 def _preprocess_dataset_nonstreaming_group_by_length(
-    raw_datasets, data_args, tokenizer, block_size, column_names, is_main_process
+        raw_datasets, data_args, tokenizer, block_size, column_names, is_main_process
 ):
     """
     非流模式下按长度分组预处理数据集
@@ -1136,7 +1134,7 @@ def _preprocess_dataset_nonstreaming_group_by_length(
 
 
 def _preprocess_dataset_nonstreaming_direct(
-    raw_datasets, data_args, tokenizer, block_size, column_names, is_main_process
+        raw_datasets, data_args, tokenizer, block_size, column_names, is_main_process
 ):
     """
     非流模式下直接分词并填充预处理数据集
@@ -1167,7 +1165,7 @@ def _preprocess_dataset_nonstreaming_direct(
 
 
 def _preprocess_dataset_streaming_group_by_length(
-    raw_datasets, tokenizer, block_size, column_names
+        raw_datasets, tokenizer, block_size, column_names
 ):
     """
     流模式下按长度分组预处理数据集
@@ -1209,7 +1207,7 @@ def _preprocess_dataset_streaming_group_by_length(
 
 
 def _preprocess_dataset_streaming_direct(
-    raw_datasets, tokenizer, block_size, column_names
+        raw_datasets, tokenizer, block_size, column_names
 ):
     """
     流模式下直接分词并填充预处理数据集
