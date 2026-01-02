@@ -25,15 +25,16 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 from dataclasses import dataclass, field
 from typing import Optional
 
-
 # Monkey patch PPOConfig to fix world_size issue
 _original_ppo_config_init = OriginalPPOConfig.__init__
+
 
 def _patched_ppo_config_init(self, *args, **kwargs):
     # Ensure world_size has a default value
     if 'world_size' not in kwargs or kwargs['world_size'] is None:
         kwargs['world_size'] = int(os.environ.get("WORLD_SIZE", "1"))
     _original_ppo_config_init(self, *args, **kwargs)
+
 
 OriginalPPOConfig.__init__ = _patched_ppo_config_init
 
@@ -511,7 +512,7 @@ def load_and_prepare_datasets(args, training_args, tokenizer, is_main_process):
 
     Args:
         args: PPOArguments参数，包含数据路径、模板名称等配置
-        training_args: 训练参数，包含数据并行处理数等配置
+        training_args: 训练参数，包含数据并行处理等配置
         tokenizer: 分词器，用于将文本转换为token
         is_main_process: 是否为主进程（用于分布式训练日志控制）
 
@@ -643,22 +644,6 @@ def tokenize_and_filter(dataset, preprocess_fn, training_args, is_main_process, 
     logger.debug(f"{name} samples top3: {tokenized[:3]}")
     return tokenized
 
-
-# =========================
-# Preprocess
-# prompt_template样例：
-# Conversation(
-#     name="qwen",
-#     system_prompt="<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n",
-#     messages=[],
-#     roles=("user", "assistant"),
-#     prompt="<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n",
-#     sep="\n",
-#     stop_str="<|im_end|>",
-# )
-# example：
-#   {"conversations":[{"from":"human","value":"轻度白内障的临床表现有些什么？"},{"from":"gpt","value":"轻度白内障伴玻璃体混浊"}]}
-# =========================
 
 def build_preprocess_function(tokenizer, prompt_template, max_source_length):
     """
