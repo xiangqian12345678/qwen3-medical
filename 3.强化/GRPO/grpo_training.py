@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 import torch
+from datasets import load_dataset, concatenate_datasets
 from latex2sympy2_extended import NormalizationConfig
 from loguru import logger
 from math_verify import LatexExtractionConfig, parse, verify
@@ -82,7 +83,22 @@ def normalize_text(text):
 
 
 def extract_answer(text):
-    """Extract content between <answer> tags."""
+    """Extract content between <answer> tags.
+
+    Args:
+        text (str): 输入文本，可能包含 <answer> 标签
+
+    Returns:
+        str: 提取的答案内容
+
+    Examples:
+        >>> extract_answer("这是一些文本<answer>真正的答案在这里</answer>更多文本")
+        "真正的答案在这里"
+        >>> extract_answer("没有标签的文本")
+        "没有标签的文本"
+        >>> extract_answer(None)
+        ""
+    """
 
     # 如果输入文本是 None，返回空字符串，避免后续操作报错
     if text is None:
@@ -128,19 +144,137 @@ def accuracy_reward(completions, answer, **kwargs):
 
     for content, sol in zip(contents, answer):
         if '####' in sol:
-            # 针对 GSM8K 数据集的特殊处理
-            # 将答案中 '####' 后面的部分提取出来进行解析
+            '''
+            针对 GSM8K 数据集的特殊处理
+            输入：
+                sol = "问题描述... #### 42"
+                content = "模型输出文本: <answer>42</answer>"
+            输出：
+                gold_parsed   # 42
+                answer_parsed # 42
+            '''
             gold_parsed = parse(sol.split("####", 1)[-1].strip())
             # 将模型生成的文本中提取的答案解析
             answer_parsed = parse(extract_answer(content))
         else:
-            # 常规情况：尝试使用 LaTeX 解析标准答案
+            '''
+            常规情况：尝试使用 LaTeX 解析标准答案
+            输入：
+                sol = "问题描述... 最终答案是 $x = 5$."
+                content = "模型输出: 计算得到结果 $x=5$."
+            输出：
+                gold_parsed   # 5
+                answer_parsed # 5
+            LatexExtractionConfig()主要解析：
+                1.$...$ 或 $$...$$ 里的数学表达式，例如 "$x = 42$" 或 "$$y = \frac{1}{2}$$"
+                2.被 \boxed{...} 包围的答案，例如 "\boxed{42}" 表示最终答案 42
+                3.基础运算符和等式
+                    例如： "x = 3 + \frac{1}{2}"  会解析出3.5
+                    例如： text = "解得 x = \frac{6}{2} = 3" 会解析出3
+            '''
             gold_parsed = parse(
                 sol,
                 extraction_mode="first_match",
                 extraction_config=[LatexExtractionConfig()],  # 使用 LaTeX 配置解析
             )
-            # 对生成内容进行 LaTeX 解析
+            '''
+            ================ LaTeX 解析示例 =================
+            说明：
+            - 使用 parse(content, extraction_config=[...], extraction_mode="first_match") 进行解析
+            - 配置说明：
+                * normalization_config:
+                    - nits=False                  # 不规范化单位
+                    - malformed_operators=False   # 不允许解析错误操作符
+                    - basic_latex=True            # 解析基础 LaTeX
+                    - equations=True              # 提取方程
+                    - boxed="all"                 # 提取所有被框内容
+                    - units=True                  # 提取单位
+                * boxed_match_priority=0           # 优先匹配 boxed
+                * try_extract_without_anchor=False # 不尝试无 anchor 提取
+                * extraction_mode="first_match"   # 只返回第一个匹配
+            
+            -------------------------------------------------
+            1️⃣ 简单方程解析
+            输入：
+                content = "求解方程：\\( x^2 - 4 = 0 \\)"
+            输出：
+                {
+                    "equations": ["x^2 - 4 = 0"],
+                    "boxed": [],
+                    "units": []
+                }
+            
+            -------------------------------------------------
+            2️⃣ 被框答案提取
+            输入：
+                content = "解得 \\boxed{x = 2} 或 \\boxed{x = -2}"
+            输出：
+                {
+                    "equations": [],
+                    "boxed": ["x = 2", "x = -2"],
+                    "units": []
+                }
+            
+            -------------------------------------------------
+            3️⃣ 带单位的解析
+            输入：
+                content = "电流为 \\( I = 5\\,\\text{A} \\)"
+            输出：
+                {
+                    "equations": ["I = 5 A"],
+                    "boxed": [],
+                    "units": ["A"]
+                }
+            
+            -------------------------------------------------
+            4️⃣ 复杂方程 + 被框 + 单位
+            输入：
+                content = "结果为 \\boxed{v = 10\\,\\text{m/s}}，满足方程 \\( v^2 = 2gh \\)"
+            输出：
+                {
+                    "equations": ["v^2 = 2gh"],
+                    "boxed": ["v = 10 m/s"],
+                    "units": ["m/s"]
+                }
+            
+            -------------------------------------------------
+            5️⃣ 多个方程 + 错误操作符（未允许解析）
+            输入：
+                content = "求解方程：\\( x^^2 - 5 = 0 \\) 和 \\( y^2 - 4 = 0 \\)"
+            输出：
+                {
+                    "equations": ["y^2 - 4 = 0"],
+                    "boxed": [],
+                    "units": []
+                }
+            说明：第一个方程因为操作符错误未被解析
+            
+            -------------------------------------------------
+            6️⃣ 无 anchor 的 boxed 提取
+            输入：
+                content = "答案是 \\boxed{42}"
+            输出：
+                {
+                    "equations": [],
+                    "boxed": ["42"],
+                    "units": []
+                }
+            
+            -------------------------------------------------
+            7️⃣ 基础 LaTeX 符号解析
+            输入：
+                content = "积分 \\( \\int_0^1 x^2 dx = \\frac{1}{3} \\)"
+            输出：
+                {
+                    "equations": ["∫_0^1 x^2 dx = 1/3"],
+                    "boxed": [],
+                    "units": []
+                }
+            
+            =================================================
+            """
+
+            '''
             answer_parsed = parse(
                 content,
                 extraction_config=[
@@ -162,6 +296,13 @@ def accuracy_reward(completions, answer, **kwargs):
 
         # 验证生成答案是否与标准答案匹配
         try:
+            '''
+            功能：比较模型答案和标准答案的解析结果
+            典型实现：
+                完全匹配：如果每个字段都一样，返回 1，否则 0
+                近似匹配：比如数值接近或顺序无关，返回一个 0~1 之间的分数
+                返回类型：数值（float 或可转成 float） 
+            '''
             reward = float(verify(answer_parsed, gold_parsed))  # verify 返回 True/False 或可转为 float 的值
         except Exception as e:
             logger.warning(f"Error in verification: {e}")
@@ -202,6 +343,18 @@ def format_reward(completions, **kwargs):
     pattern = r"<think>.*?</think><answer>.*?</answer>$"
 
     # 提取每条生成内容的文本
+    # 样例：
+    # completions = [
+    #     [ {"content": "<think>我先分析一下...</think><answer>42</answer>"} ],
+    #     [ {"content": "<think>思考过程...</think><answer>答案是100</answer>"} ],
+    #     [ {"content": "没有按格式生成"}  # 这个就不符合格式 ]
+    # ]
+    # completion_contents=
+    # [
+    #     "<think>我先分析一下...</think><answer>42</answer>",
+    #     "<think>思考过程...</think><answer>答案是100</answer>",
+    #     "没有按格式生成"
+    # ]
     completion_contents = [completion[0]["content"] for completion in completions]
 
     # 对每条文本进行正则匹配，检查是否符合指定格式
@@ -224,13 +377,6 @@ SYSTEM_PROMPT = (
 )
 
 
-def get_checkpoint(training_args: GRPOConfig):
-    last_checkpoint = None
-    if os.path.isdir(training_args.output_dir):
-        last_checkpoint = get_last_checkpoint(training_args.output_dir)
-    return last_checkpoint
-
-
 def find_all_linear_names(peft_model, int4=False, int8=False):
     """Find all linear layer names in the model. reference from qlora paper."""
     cls = torch.nn.Linear
@@ -251,9 +397,6 @@ def find_all_linear_names(peft_model, int4=False, int8=False):
             names = name.split('.')
             lora_module_names.add(names[0] if len(names) == 1 else names[-1])
     return sorted(lora_module_names)
-
-
-from datasets import load_dataset, concatenate_datasets
 
 
 def load_datasets_from_hub(script_args):
@@ -539,34 +682,58 @@ def setup_quantization_config(model_args, script_args, dtype, is_main_process):
 
 
 def setup_device_map(training_args, model_kwargs):
-    """Setup device mapping for distributed and multi-GPU training."""
+    """Setup device mapping for distributed and multi-GPU training.
+
+    设置分布式和多 GPU 训练的设备映射。
+
+    Args:
+        training_args: 训练参数对象，包含梯度累积步数等配置
+        model_kwargs: 模型初始化参数字典，会被直接传递给模型
+
+    Returns:
+        num_gpus: 可用的 GPU 数量
+    """
+    # 获取分布式训练的世界大小，默认为 1（单卡）
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    # 判断是否使用 DDP（Distributed Data Parallel）训练
     ddp = world_size != 1
+    # 获取当前系统可用的 GPU 数量
     num_gpus = torch.cuda.device_count()
 
     # DeepSpeed Zero-3 不兼容 device_map，需要检查是否启用
+    # Zero-3 会自动处理模型分片和设备分配，手动设置会导致冲突
     if is_deepspeed_zero3_enabled():
         # DeepSpeed Zero-3 时不设置 device_map，让 DeepSpeed 自动管理
+        # 判断当前进程是否为主进程（rank 0）
         is_main_process = (int(os.environ.get("RANK", "0")) == 0)
         if is_main_process:
             logger.info("DeepSpeed Zero-3 detected, skipping device_map setup")
         return num_gpus
 
+    # DDP 训练模式：每个进程使用一张 GPU
     if ddp:
+        # 将模型分配到当前进程对应的本地 GPU
+        # LOCAL_RANK 是 DDP 环境中每个进程的本地 GPU 索引
         device_map = {"": int(os.environ.get("LOCAL_RANK", "0"))}
         model_kwargs["device_map"] = device_map
-        # Ensure gradient_accumulation_steps is at least 1 after division
+        # 调整梯度累积步数：DDP 下总 batch size = batch_size * world_size
+        # 因此需要相应减少梯度累积步数以保持等效的 batch size
         training_args.gradient_accumulation_steps = max(training_args.gradient_accumulation_steps // world_size, 1)
+    # 多 GPU 但非 DDP：使用 device_map="auto" 自动分配
     elif num_gpus > 1:
         max_memory = {}
         for i in range(num_gpus):
+            # 获取每个 GPU 的属性信息
             gpu_props = torch.cuda.get_device_properties(i)
             total_mem = gpu_props.total_memory
-            # 预留20%内存给训练时的梯度、优化器状态等
+            # 预留 20% 内存给训练时的梯度、优化器状态、激活值等
+            # 这可以防止 OOM（Out of Memory）错误
             usable_mem = int(total_mem * 0.8)
             max_memory[i] = f"{usable_mem // (1024 ** 3)}GiB"
+        # 设置每个 GPU 的内存限制，让 transformers 自动分配模型
         model_kwargs["max_memory"] = max_memory
         model_kwargs["device_map"] = "auto"
+    # 单 GPU 模式：自动分配
     else:
         model_kwargs["device_map"] = "auto"
 
@@ -633,7 +800,14 @@ def setup_peft_model(model, model_args, training_args, is_main_process):
         if is_main_process:
             logger.info("Fine-tuning method: LoRA(PEFT)")
 
-        # 如果启用了 gradient checkpointing，则给出警告并关闭
+        '''
+        如果启用了 gradient checkpointing，则给出警告并关闭
+        为什么量化情况下不支持checkpoint?
+        1.开启 checkpoint 时，前向不保存激活，反向需重新用量化权重计算梯度，导致精度丢失。
+        2.LoRA 的 float32 权重与量化后的 int4/float16 相加可能类型不匹配。
+        3.两者结合会造成梯度不稳定或训练报错，因此 LoRA + 量化需关闭 checkpoint。
+          使用checkpoint保存的参数是4bit或8bit，与显存中使用的float16不匹配
+        '''
         if training_args.gradient_checkpointing:
             logger.warning("Gradient checkpointing is enabled. It may cause issues with LoRA, setting it to False.")
             training_args.gradient_checkpointing = False
@@ -707,8 +881,6 @@ def create_trainer(model, tokenizer, training_args, train_dataset, test_dataset)
 
 def run_training(trainer, training_args, train_dataset, is_main_process):
     """Execute training and handle checkpoint resumption."""
-    # Training
-    last_checkpoint = get_checkpoint(training_args)
     # 禁用检查点恢复以避免DeepSpeed ZeRO-3兼容性问题
     last_checkpoint = None
 
@@ -750,23 +922,57 @@ def save_model_and_artifacts(trainer, tokenizer, training_args, script_args, is_
         logger.info(f"Model saved to {training_args.output_dir}")
 
     # 在分布式训练中，等待所有进程完成保存
+    '''
+    GRPOConfig 继承自 HuggingFace 的 TrainingArguments 类, distributed_state 是该父类的属性
+    作用是:
+    1.分布式同步点: 在多进程分布式训练中(如多GPU),所有进程运行速度可能不同
+    2.等待同步: wait_for_everyone() 会让所有进程在此处同步等待,直到所有进程都执行到这一行
+    3.避免竞态条件: 确保后续操作(如保存模型、写入文件等)在所有进程都完成前面工作后才执行
+    '''
     training_args.distributed_state.wait_for_everyone()
 
     if is_main_process:
-        # 保存 tokenizer 到输出目录
+        '''
+        作用：保存分词器（Tokenizer）的配置和词表，使得以后可以重新加载完全一致的分词器。
+        保存文件：
+            | 文件名                        | 内容                                            |
+            | -------------------------- | --------------------------------------------- |
+            | `tokenizer.json`           | Tokenizer 的完整配置和词表序列化（新版 Transformers 常用）     |
+            | `vocab.txt` / `merges.txt` | 词表文件（BPE / WordPiece 的词汇和合并规则）                |
+            | `tokenizer_config.json`    | Tokenizer 的配置信息，比如特殊 token（`[PAD]`、`[CLS]` 等） |
+            | `special_tokens_map.json`  | 特殊 token 映射，如 `pad_token`, `eos_token` 等      |
+            | `added_tokens.json`（可选）    | 如果训练中增加了自定义 token，会保存它们                       |
+        '''
         tokenizer.save_pretrained(training_args.output_dir)
         logger.info(f"Tokenizer saved to {training_args.output_dir}")
 
         # 创建并保存模型卡（model card），包含数据集信息和标签
         kwargs = {
-            "dataset_name": script_args.dataset_name,  # 使用的训练数据集名称
-            "tags": ["r1", "grpo"],  # 可自定义标签，用于描述模型特性
+            "dataset_name": script_args.dataset_name,  # 说明模型训练使用的数据集是什么
+            "tags": ["r1", "grpo"],  # 给模型贴标签，描述特性或用途
         }
+
+        '''
+        作用：生成一个 README 风格的 模型卡文件，通常命名为 README.md 或 model_card.json
+        模型卡内容通常包含：
+        1.模型概览：模型名称、作者、版本
+        2.训练信息：训练数据集、训练步骤、超参数、标签
+        3.使用说明：输入输出格式、适用场景
+        4.评价指标（可选）：精度、F1、BLEU 等
+        5.许可证信息（可选）
+        '''
         trainer.create_model_card(**kwargs)
 
         # 再次确保模型配置启用缓存
         trainer.model.config.use_cache = True
-        # 保存模型配置到输出目录（包含如 hidden_size、num_layers 等信息）
+        '''
+        作用： 保存模型的 配置文件（model config），而不是权重。用于以后加载模型架构（比如层数、隐藏层维度等）。
+        保存文件：
+            | 文件名         | 内容                                                                                     |
+            | ------------- | -------------------------------------------------------------------------------------- |
+            | `config.json` | 模型结构配置，如：`hidden_size`, `num_attention_heads`, `num_layers`, `vocab_size`, `dropout` 等 |
+            | 其他可选文件    | 例如自定义的 `pretraining_args.json` 或 `adapter_config.json`（如果使用 LoRA/PEFT）                 |
+        '''
         trainer.model.config.save_pretrained(training_args.output_dir)
 
         logger.info("*** Training complete! ***")  # 日志提示训练及保存完成
@@ -802,11 +1008,8 @@ def grpo_train(
     # 根据 script_args 和 training_args 加载训练集和测试集，并支持分布式数据划分
     train_dataset, test_dataset = prepare_datasets(script_args, training_args, is_main_process)
 
-    # 模型初始化
-    dtype = (
-        model_args.dtype if model_args.dtype in ["auto", None] else getattr(torch, model_args.dtype)
-    )
     # 设置模型数据类型，例如 float32、float16 等
+    dtype = (model_args.dtype if model_args.dtype in ["auto", None] else getattr(torch, model_args.dtype))
 
     # 配置量化（可选）
     quantization_config = setup_quantization_config(model_args, script_args, dtype, is_main_process)
