@@ -1,11 +1,6 @@
-# -*- coding: utf-8 -*-
-"""
-@author:XuMing(xuming624@qq.com)
-@description:
-"""
-
 import math
 import os
+import sys
 from dataclasses import dataclass, field
 from glob import glob
 from typing import Any, List, Union, Optional, Dict
@@ -97,14 +92,14 @@ class DataArguments:
     # 如果提供了此字段，将直接从 HuggingFace Hub 下载对应数据集。
     dataset_name: Optional[str] = field(
         default=None,
-        metadata={"help": "指定要使用的数据集名称（通过 datasets 库加载）。"}
+        metadata={"help": "指定要使用的数据集名称列表（通过 datasets 库加载）。"}
     )
 
     # 一些数据集有多个配置，例如不同子任务或不同版本的数据。
     # 通过此字段选择具体配置，例如 "sst2,v1.1,none,None" 等。
     dataset_config_name: Optional[str] = field(
         default=None,
-        metadata={"help": "指定数据集的配置名称（通过 datasets 库加载）。"}
+        metadata={"help": "指定数据集的配置名称列表（通过 datasets 库加载）。"}
     )
 
     # 如果使用本地数据而不是 HuggingFace 数据集，可以通过此路径加载训练文件。
@@ -179,13 +174,6 @@ class DataArguments:
         metadata={"help": "数据预处理时使用的进程数"}
     )
 
-    # # 指定数据集缓存目录路径，用于存储下载和处理后的数据集。
-    # # 如果不指定，将使用默认的缓存路径（通常是 ~/.cache/huggingface/datasets）。
-    # cache_dir: Optional[str] = field(
-    #     default=None,
-    #     metadata={"help": "数据集缓存目录路径"}
-    # )
-
 
 @dataclass
 class ScriptArguments:
@@ -252,9 +240,11 @@ def compute_metrics(eval_preds):
         labels = labels.detach().cpu().numpy()
 
     # 计算均方误差（MSE），衡量预测值与真实值的平方差平均值
+    # MSE = (1 / n) * sum_{i=1..n} (y_i - y_hat_i)^2
     mse = mean_squared_error(labels, preds)
 
     # 计算平均绝对误差（MAE），衡量预测值与真实值的绝对差平均值
+    # MAE = (1 / n) * sum_{i=1..n} |y_i - y_hat_i|
     mae = mean_absolute_error(labels, preds)
 
     # 返回指标字典
@@ -271,6 +261,66 @@ class RewardDataCollatorWithPadding:
     return_tensors: str = "pt"
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        1. 函数功能
+        ----------
+        数据批处理与填充器，用于将多个样本（features）组合成一个 batch，并进行 padding 对齐。
+
+        核心职责：
+        - 将奖励模型训练所需的 "chosen"（偏好）和 "rejected"（非偏好）两组输入分别收集
+        - 使用 tokenizer.pad 方法将同一组内的所有样本补齐到相同长度
+        - 返回可直接输入模型的张量格式 batch
+
+        输入格式：
+            features = [
+                {
+                    "input_ids_chosen": [151644, 8948, 198, ...],      # 偏好响应的 token ids
+                    "attention_mask_chosen": [1, 1, 1, ...],          # 偏好响应的 attention mask
+                    "input_ids_rejected": [151644, 8948, 198, ...],   # 非偏好响应的 token ids
+                    "attention_mask_rejected": [1, 1, 1, ...]         # 非偏好响应的 attention mask
+                },
+                # ... 更多样本
+            ]
+
+        输出格式：
+            batch = {
+                "input_ids_chosen": torch.Tensor,      # [batch_size, max_length] - 偏好响应
+                "attention_mask_chosen": torch.Tensor,  # [batch_size, max_length]
+                "input_ids_rejected": torch.Tensor,   # [batch_size, max_length] - 非偏好响应
+                "attention_mask_rejected": torch.Tensor,  # [batch_size, max_length]
+                "return_loss": True                    # 标识需要计算损失
+            }
+
+        2. 函数什么时候调用
+        ----------
+        由 HuggingFace Trainer 在训练/评估循环中自动调用。
+
+        调用时机：
+        - 每个 batch 从 DataLoader 加载后
+        - 在将数据输入模型之前
+
+        调用链路：
+            DataLoader -> DataCollator (本方法) -> Model.forward()
+
+        配置方式：
+            trainer = Trainer(
+                ...,
+                data_collator=RewardDataCollatorWithPadding(
+                    tokenizer=tokenizer,
+                    max_length=full_max_length,
+                    padding="max_length"
+                )
+            )
+
+        参数说明：
+            features: List[Dict[str, Any]]
+                包含多个样本的列表，每个样本已通过 tokenization 处理
+                每个 dict 包含 4 个键：input_ids_chosen, attention_mask_chosen,
+                input_ids_rejected, attention_mask_rejected
+
+        返回值：
+            Dict[str, Any]: 包含 padding 后的张量，可直接输入模型
+        """
         features_chosen = []
         features_rejected = []
         for feature in features:
@@ -286,15 +336,18 @@ class RewardDataCollatorWithPadding:
                     "attention_mask": feature["attention_mask_rejected"],
                 }
             )
-        # 对已有的 token 序列进行 padding（填充）和对齐，并生成 tensor
+        # 把一组已经 tokenized 的样本（features_chosen）补齐成一个 batch，确保
+        # 1.序列长度一致
+        # 2.方便直接喂给模型（尤其是 GPU / DDP / Deepspeed）
         batch_chosen = self.tokenizer.pad(
-            features_chosen,
-            padding=self.padding,
-            max_length=self.max_length,
-            pad_to_multiple_of=self.pad_to_multiple_of,
-            return_tensors=self.return_tensors,
+            features_chosen,  # 已 tokenize 的样本列表
+            padding=self.padding,  # padding 策略：longest / max_length
+            max_length=self.max_length,  # 最大长度（仅在 max_length 模式下生效）
+            pad_to_multiple_of=self.pad_to_multiple_of,  # 对齐到指定倍数，提升算力效率
+            return_tensors=self.return_tensors,  # 返回 torch Tensor（通常是 "pt"）
         )
-        # 对已有的 token 序列进行 padding（填充）和对齐，并生成 tensor
+
+        # 把一组已经 tokenized 的样本（features_chosen）补齐成一个 batch
         batch_rejected = self.tokenizer.pad(
             features_rejected,
             padding=self.padding,
@@ -319,12 +372,115 @@ class RewardTrainer(Trainer):
     """
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        """
+        计算奖励模型的损失（Reward Model Loss）
+
+        函数功能：
+        -----------
+        实现 InstructGPT 论文中的成对损失函数（Pairwise Log Loss）。
+        通过对比偏好响应（chosen）和非偏好响应（rejected）的奖励分数，
+        训练模型学习人类偏好。
+
+        核心原理：
+        -----------
+        - 奖励模型（Reward Model）是一个分类模型，输出一个标量分数（奖励值）
+        - 对于每个训练样本，包含一对（prompt, chosen）和（prompt, rejected）
+        - 训练目标：使 chosen 的奖励分数 > rejected 的奖励分数
+        - 使用 logistic loss（logsigmoid）实现这一目标
+
+        数学公式：
+        -----------
+        loss = -logsigmoid(reward_chosen - reward_rejected).mean()
+
+        其中：
+        - sigmoid(x) = 1 / (1 + exp(-x))
+        - 当 reward_chosen - reward_rejected 很大时，sigmoid 接近 1，loss 接近 0
+        - 当 reward_chosen - reward_rejected 很小时，sigmoid 接近 0.5，loss 接近 0.69
+        - 当 reward_chosen - reward_rejected 为负时，sigmoid 小于 0.5，loss 大于 0.69
+
+        参数说明：
+        -----------
+        model: AutoModelForSequenceClassification
+            奖励模型，继承自 PreTrainedModel
+            - 输入：input_ids 和 attention_mask
+            - 输出：logits，形状为 [batch_size, 1]，表示奖励分数
+
+        inputs: Dict[str, torch.Tensor]
+            包含 chosen 和 rejected 两组输入的字典
+            结构：
+                {
+                    "input_ids_chosen": torch.Tensor,      # [batch_size, seq_len] - 偏好响应的 token ids
+                    "attention_mask_chosen": torch.Tensor,  # [batch_size, seq_len] - 偏好响应的 attention mask
+                    "input_ids_rejected": torch.Tensor,   # [batch_size, seq_len] - 非偏好响应的 token ids
+                    "attention_mask_rejected": torch.Tensor  # [batch_size, seq_len] - 非偏好响应的 attention mask
+                }
+
+        return_outputs: bool
+            是否返回中间输出（奖励分数）
+            - False: 仅返回 loss（训练时使用）
+            - True: 返回 loss 和奖励分数（评估/调试时使用）
+
+        **kwargs: Dict
+            额外关键字参数（未使用）
+
+        返回值：
+        -------
+        torch.Tensor 或 tuple:
+            - 如果 return_outputs=False: 返回 loss（标量）
+            - 如果 return_outputs=True: 返回 (loss, {"rewards_chosen": ..., "rewards_rejected": ...})
+
+        训练流程示例：
+        ---------------
+        1. 输入样本：
+            chosen_prompt: "问：什么是感冒？\n答：感冒是由病毒引起的..."
+            rejected_prompt: "问：什么是感冒？\n答：感冒是一种病..."
+
+        2. 模型前向传播：
+            reward_chosen = model(chosen_prompt)[0] = 2.5
+            reward_rejected = model(rejected_prompt)[0] = 1.0
+
+        3. 计算差异：
+            diff = reward_chosen - reward_rejected = 1.5
+
+        4. 应用 logsigmoid：
+            logsigmoid(1.5) ≈ log(0.817) ≈ -0.20
+
+        5. 计算损失：
+            loss = -(-0.20) = 0.20
+
+        6. 反向传播更新参数，使 reward_chosen > reward_rejected
+
+        什么时候调用：
+        -----------
+        - 由 HuggingFace Trainer 在训练循环中自动调用
+        - 调用时机：每个 batch 的前向传播后，反向传播前
+        - 调用链路：
+            DataLoader -> Model.forward -> compute_loss -> Optimizer.step()
+        """
+
+        # 前向传播：计算偏好响应（chosen）的奖励分数
+        # model 返回一个 tuple，第一个元素是 logits，形状为 [batch_size, 1]
         rewards_chosen = model(input_ids=inputs["input_ids_chosen"],
                                attention_mask=inputs["attention_mask_chosen"])[0]
+
+        # 前向传播：计算非偏好响应（rejected）的奖励分数
         rewards_rejected = model(input_ids=inputs["input_ids_rejected"],
                                  attention_mask=inputs["attention_mask_rejected"])[0]
-        # 计算损失：InstructGPT中的pairwise logloss
+
+        # 计算成对损失（Pairwise Log Loss）
+        # 1. rewards_chosen - rewards_rejected: 计算两个奖励的差异
+        #    - 正值：chosen 的奖励更高（理想情况）
+        #    - 负值：rejected 的奖励更高（需要优化）
+        # 2. logsigmoid(x): 计算 log(sigmoid(x))
+        #    - x 越大，logsigmoid 越接近 0
+        #    - x 越小，logsigmoid 越接近负无穷
+        # 3. -logsigmoid(...): 取负号，因为我们要最小化损失
+        #    - 当 diff 很大时，logsigmoid 接近 0，loss 接近 0（无需优化）
+        #    - 当 diff 很小时，logsigmoid 为负，loss 为正（需要优化）
+        # 4. .mean(): 对 batch 中所有样本取平均
         loss = -torch.nn.functional.logsigmoid(rewards_chosen - rewards_rejected).mean()
+
+        # 如果需要返回中间输出（用于评估或调试）
         if return_outputs:
             return loss, {"rewards_chosen": rewards_chosen, "rewards_rejected": rewards_rejected}
         return loss
@@ -335,6 +491,43 @@ class RewardTrainer(Trainer):
             ignore_keys: Optional[List[str]] = None,
             metric_key_prefix: str = "eval",
     ) -> Dict[str, float]:
+        """
+        评估奖励模型的性能。
+
+        参数说明：
+        ----------
+        eval_dataset: Optional[Dataset]
+            用于评估的数据集。如果未提供，将使用初始化时设置的 self.eval_dataset
+        ignore_keys: Optional[List[str]]
+            评估时要忽略的输出键名列表
+
+            示例：
+            - 如果模型输出包含 {"loss": ..., "rewards_chosen": ..., "rewards_rejected": ..., "hidden_states": ...}
+            - 设置 ignore_keys=["hidden_states"]，则在计算指标时不会使用 "hidden_states"
+            - 默认为 None，表示不忽略任何输出键
+        metric_key_prefix: str
+            指标名称的前缀，默认为 "eval"。例如，评估结果会返回为 {"eval_loss": ..., "eval_accuracy": ...}
+
+        返回值：
+        -------
+        Dict[str, float]
+            包含评估指标的字典，例如：
+            {
+                "eval_loss": 0.234,
+                "eval_rewards_chosen": 2.45,
+                "eval_rewards_rejected": 1.23
+            }
+
+        什么时候调用：
+        -----------
+        - 在训练过程中，当 TrainingArguments.eval_steps 指定的步数达到时自动调用
+        - 训练结束时自动调用一次
+        - 也可以手动调用此方法进行独立评估
+
+        调用链路：
+        ---------
+        Trainer.evaluate -> compute_metrics -> 返回指标字典
+        """
         if eval_dataset is None:
             eval_dataset = self.eval_dataset
         return super().evaluate(eval_dataset=eval_dataset, ignore_keys=ignore_keys, metric_key_prefix=metric_key_prefix)
@@ -382,16 +575,9 @@ def save_model(model, tokenizer, args):
     tokenizer.save_pretrained(output_dir)
 
 
-class CastOutputToFloat(torch.nn.Sequential):
-    """Cast the output of the model to float"""
-
-    def forward(self, x):
-        return super().forward(x).to(torch.float32)
-
-
 def print_trainable_parameters(model):
     """
-    Prints the number of trainable parameters in the model.
+    打印所有可以训练的参数
     """
     trainable_params = 0
     all_param = 0
@@ -661,7 +847,6 @@ def load_model_and_tokenizer(model_args, script_args):
     )
 
     # DeepSpeed 模式下检查是否传递了 deepspeed 参数
-    import sys
     use_deepspeed = "--deepspeed" in sys.argv
 
     if use_deepspeed:
@@ -755,6 +940,12 @@ def setup_peft_model(model, model_args, script_args):
         logger.info(f"Peft target_modules: {target_modules}")
         logger.info(f"Peft lora_rank: {script_args.lora_rank}")
 
+        '''
+        modules_to_save=None（默认）
+            只存储：所有线性模块的 lora_A, lora_B 权重
+        modules_to_save="score"
+            存储：所有线性模块的 lora_A, lora_B 权重 + score 模块的完整权重
+        '''
         peft_config = LoraConfig(
             task_type=TaskType.SEQ_CLS,
             target_modules=target_modules,
@@ -1132,7 +1323,7 @@ def run_evaluation(trainer, training_args, max_eval_samples):
 
     metrics["perplexity"] = perplexity
     trainer.log_metrics("eval", metrics)
-    trainer.save_metrics("eval", metrics)
+    trainer.save_metrics("eval", metrics) # 生成评估文件eval_results.json
 
     if trainer.is_world_process_zero():
         logger.debug(f"Eval metrics: {metrics}")
