@@ -77,7 +77,6 @@ class DatasetArguments:
     template_name: Optional[str] = field(default="vicuna", metadata={"help": "The prompt template name."})
     max_source_length: Optional[int] = field(default=2048, metadata={"help": "Max length of prompt input text"})
     max_target_length: Optional[int] = field(default=512, metadata={"help": "Max length of output text"})
-    min_target_length: Optional[int] = field(default=4, metadata={"help": "Min length of output text"})
     max_train_samples: Optional[int] = field(
         default=None,
         metadata={
@@ -124,46 +123,151 @@ class PeftArguments:
 
 @dataclass
 class TrainingArguments:
-    """Training related arguments"""
+    """训练相关参数配置"""
+    # ========== 批次大小配置 ==========
+    # 每个设备（GPU/TPU）训练时的批次大小
+    # 影响显存占用：值越大显存占用越高，但训练速度可能更快
     per_device_train_batch_size: Optional[int] = field(default=4, metadata={"help": "Train batch size per device"})
+
+    # 每个设备验证时的批次大小
+    # 通常比训练批次大，因为验证时不需要计算梯度，显存占用较小
     per_device_eval_batch_size: Optional[int] = field(default=1, metadata={"help": "Eval batch size per device"})
+
+    # ========== 训练控制开关 ==========
+    # 是否执行训练
     do_train: bool = field(default=False, metadata={"help": "Whether to run training."})
+
+    # 是否在验证集上执行评估
     do_eval: bool = field(default=False, metadata={"help": "Whether to run eval on the validation set."})
+
+    # ========== 优化器和学习率配置 ==========
+    # 学习率：控制模型参数更新的步长
+    # ORPO/DPO 等强化学习方法通常使用较大的学习率（如 5e-4 ~ 1e-3）
     learning_rate: Optional[float] = field(default=5e-4, metadata={"help": "Learning rate"})
+
+    # 学习率调度器类型
+    # 常见选项：'linear'（线性衰减）、'cosine'（余弦衰减）、'constant'（保持不变）
     lr_scheduler_type: Optional[str] = field(default="cosine", metadata={"help": "The lr scheduler type"})
+
+    # 预热步数：在训练初期使用较小的学习率，逐步增加到目标学习率
+    # 有助于模型稳定收敛，避免初期梯度爆炸
     warmup_steps: Optional[int] = field(default=100, metadata={"help": "The number of warmup steps"})
+
+    # 权重衰减：L2 正则化系数，用于防止过拟合
+    # 典型值：0.01 ~ 0.1
     weight_decay: Optional[float] = field(default=0.05, metadata={"help": "The weight decay"})
+
+    # 优化器类型
+    # 常见选项：'adamw_torch'（PyTorch AdamW）、'adamw_hf'（HuggingFace AdamW）、'adafactor'
     optim: Optional[str] = field(default="adamw_torch", metadata={"help": "The optimizer type"})
+
+    # ========== 精度配置 ==========
+    # 是否使用 FP16（半精度浮点数）训练
+    # 优点：显存占用减半，训练速度更快
+    # 缺点：可能出现数值溢出或精度损失
     fp16: Optional[bool] = field(default=False, metadata={"help": "Whether to use fp16"})
+
+    # 是否使用 BF16（脑浮点数）训练
+    # 优点：显存占用减半，数值范围比 FP16 更大，更稳定
+    # 缺点：需要硬件支持（Ampere 架构及之后的 GPU）
     bf16: Optional[bool] = field(default=False, metadata={"help": "Whether to use bf16"})
+
+    # ========== 梯度和显存优化 ==========
+    # 是否启用梯度检查点（Gradient Checkpointing）
+    # 原理：不保存所有中间激活，而是在反向传播时重新计算
+    # 优点：大幅节省显存（可训练更大模型）
+    # 缺点：增加约 20% 计算时间
     gradient_checkpointing: Optional[bool] = field(
         default=True, metadata={"help": "Whether to use gradient checkpointing"}
     )
+
+    # 梯度累积步数
+    # 作用：累积多次前向传播的梯度后再更新参数
+    # 示例：batch_size=4, accumulation=4 => 等效 batch_size=16
+    # 优点：在显存有限时模拟更大批次
     gradient_accumulation_steps: Optional[int] = field(
         default=4, metadata={"help": "The number of gradient accumulation steps"}
     )
+
+    # ========== 保存、评估和日志配置 ==========
+    # 每隔多少步保存一次模型检查点
     save_steps: Optional[int] = field(default=50, metadata={"help": "X steps to save the model"})
+
+    # 每隔多少步在验证集上评估一次
     eval_steps: Optional[int] = field(default=50, metadata={"help": "X steps to evaluate the model"})
+
+    # 每隔多少步记录一次训练日志（loss、学习率等）
     logging_steps: Optional[int] = field(default=1, metadata={"help": "X steps to log the model"})
+
+    # 输出目录：保存模型检查点、日志、配置等的路径
     output_dir: Optional[str] = field(default="outputs-dpo", metadata={"help": "The output directory"})
+
+    # 最大训练步数
+    # 注意：如果设置了 num_train_epochs，则以 epoch 为准
     max_steps: Optional[int] = field(default=200, metadata={"help": "Number of steps to train"})
+
+    # 评估策略
+    # 'steps'：按步数评估（配合 eval_steps 使用）
+    # 'epoch'：按 epoch 评估（每个 epoch 结束后评估）
+    # 'no'：不评估
     eval_strategy: Optional[str] = field(default="steps", metadata={"help": "Evaluation strategy"})
+
+    # 是否删除数据集中未使用的列
+    # True：删除模型不需要的字段，减少数据传输和内存占用
+    # False：保留所有字段（某些自定义数据处理可能需要）
     remove_unused_columns: Optional[bool] = field(
         default=False,
         metadata={"help": "Remove unused columns from the dataset if `datasets.Dataset` is used"},
     )
+
+    # 训练监控工具
+    # 'tensorboard'：使用 TensorBoard 可视化（默认）
+    # 'wandb'：使用 Weights & Biases 实验追踪
+    # 'none'：不使用任何监控工具
     report_to: Optional[str] = field(default="tensorboard", metadata={"help": "Report to wandb or tensorboard"})
-    deepspeed: Optional[str] = field(default=None, metadata={"help": "Enable deepspeed and pass the path to deepspeed config file"})
-    ddp_timeout: Optional[int] = field(default=1800, metadata={"help": "Timeout for distributed training"})
-    ddp_find_unused_parameters: Optional[bool] = field(default=False, metadata={"help": "Find unused parameters in DDP"})
+
+    # ========== 分布式训练配置 ==========
+    # DeepSpeed 配置文件路径
+    # 用于大规模分布式训练，支持 ZeRO-1/2/3 等优化
+    deepspeed: Optional[str] = field(default=None,
+                                     metadata={"help": "Enable deepspeed and pass the path to deepspeed config file"})
+
+    # DDP（分布式数据并行）是否查找未使用的参数
+    # True：检查所有参数（某些模型可能需要）
+    # False：不检查（性能更好，推荐）
+    ddp_find_unused_parameters: Optional[bool] = field(default=False,
+                                                       metadata={"help": "Find unused parameters in DDP"})
+
+    # ========== 其他配置 ==========
+    # 是否记录第一步（step=0）的日志
+    # True：记录初始状态，便于对比
+    # False：不记录（节省日志文件大小）
     logging_first_step: Optional[bool] = field(default=False, metadata={"help": "Log the first step"})
-    dataloader_num_workers: Optional[int] = field(default=0, metadata={"help": "Number of subprocesses to use for data loading"})
+
+    # 数据加载的工作进程数
+    # 0：不使用多进程，在主进程中加载数据（推荐，避免死锁）
+    # >0：使用多进程加速数据加载（可能引入额外复杂性）
+    dataloader_num_workers: Optional[int] = field(default=0,
+                                                  metadata={"help": "Number of subprocesses to use for data loading"})
 
 
 @dataclass
 class ORPOSpecificArguments:
-    """ORPO specific arguments"""
+    """ORPO 算法特定参数配置"""
+    # ========== ORPO/DPO 损失函数参数 ==========
+    # beta 参数：DPO 损失中的权重系数
+    # 用于控制偏好优化对齐的强度
+    # - 较小的值（如 0.01 ~ 0.1）：更温和的优化，保留更多原始模型行为
+    # - 较大的值（如 0.5 ~ 1.0）：更强的偏好对齐，可能过度拟合偏好数据
+    # ORPO 论文中推荐默认值为 0.1
     beta: Optional[float] = field(default=0.1, metadata={"help": "The beta parameter for DPO loss"})
+
+    # ORPO 独特的 beta 参数（lambda）
+    # ORPO 将 SFT 损失和偏好对齐损失结合在一起，此参数控制 SFT 损失的权重
+    # ORPO 总损失 = SFT_loss + orpo_beta * preference_loss
+    # - orpo_beta=0：纯 SFT 训练（不考虑偏好）
+    # - orpo_beta=0.1（默认）：推荐值，平衡 SFT 和偏好优化
+    # - orpo_beta=0.5 或更高：偏好对齐占主导地位
     orpo_beta: float = field(
         default=0.1,
         metadata={"help": "The beta (lambda) parameter in ORPO loss representing the weight of the SFT loss."},
@@ -416,11 +520,53 @@ def create_dataset_preprocessor(prompt_template, full_max_length):
     """Create dataset preprocessing function"""
 
     def return_prompt_and_responses(examples) -> Dict[str, str]:
+        """
+        将 ORPO 训练数据集转换为模型训练所需的格式。
+
+        输入样例 (examples):
+        {
+            "system": ["你是一个非常聪明的AI助手...", ...],  # 系统提示，每个样本一条
+            "history": [
+                [["问题1", "回答1"], ["问题2", "回答2"], ...],  # 历史对话，每条为 [用户消息, 助手消息]
+                ...
+            ],
+            "question": ["罗伯特·P·凯利曾任CEO的公司是在哪一年成立的？", ...],  # 当前问题
+            "response_chosen": ["为了帮助您解答这个问题，我需要知道...", ...],  # 优选回答
+            "response_rejected": ["当然！罗伯特·P·凯利曾担任...", ...]  # 拒绝回答
+        }
+
+        输出样例:
+        {
+            "prompt": [
+                "<|im_start|>system\n你是一个非常聪明的AI助手...<|im_end|>\n"
+                "<|im_start|>user\n罗伯特·P·凯利...<|im_end|>\n"
+                "<|im_start|>assistant\n",
+                ...
+            ],
+            "chosen": ["为了帮助您解答这个问题，我需要知道...", ...],
+            "rejected": ["当然！罗伯特·P·凯利曾担任...", ...]
+        }
+
+        参数:
+            examples: 包含系统提示、历史对话、当前问题，以及选/拒回答的字典。
+
+        返回:
+            包含构建好的 prompt 和对应的 chosen/rejected 回答的字典。
+        """
         prompts = []
+        # 遍历每个样本，构建对话提示
         for system, history, question in zip(examples["system"], examples["history"], examples["question"]):
+            # 处理系统提示，如果为空则使用空字符串
             system_prompt = system or ""
+            # 构建对话历史：
+            # - 如果有历史记录，将当前问题追加到历史记录后面
+            # - 如果没有历史记录，创建新的对话，当前问题作为第一条消息
+            # 每条消息格式为 [用户消息, 助手回复]
             history_with_question = history + [[question, '']] if history else [[question, '']]
+            # 使用 prompt_template 生成完整的提示字符串
             prompts.append(prompt_template.get_prompt(messages=history_with_question, system_prompt=system_prompt))
+
+        # 返回包含 prompt 和优选/拒绝回答的字典
         return {
             "prompt": prompts,
             "chosen": examples["response_chosen"],
@@ -581,9 +727,10 @@ def load_model(args, local_rank, is_main_process):
     # ---------------------------------------------------------
     # 2. 判断是否为 DDP 训练
     # ---------------------------------------------------------
-    # WORLD_SIZE > 1 表示多进程（多卡）训练
+    # WORLD_SIZE 是在 分布式训练（DDP, Distributed Data Parallel） 场景下需要配置的一个环境变量，
+    # 用于告诉程序总共有多少个进程/GPU 参与训练
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
-    ddp = world_size != 1
+    ddp = world_size != 1  # 所有 GPU 总数
 
     if ddp:
         # DDP Distributed Data Parallel多数据并行模式下：
@@ -593,9 +740,8 @@ def load_model(args, local_rank, is_main_process):
 
         # 梯度累积步数需要按 world_size 均分
         # （保证全局 batch size 不变）
-        args.gradient_accumulation_steps = (
-                args.gradient_accumulation_steps // world_size
-        )
+        args.gradient_accumulation_steps = (args.gradient_accumulation_steps // world_size
+                                            )
     else:
         # 单卡 / 推理模式下使用 transformers 自动 device_map
         args.device_map = "auto"
@@ -633,6 +779,11 @@ def load_model(args, local_rank, is_main_process):
     # ---------------------------------------------------------
     # 6. 加载模型权重
     # ---------------------------------------------------------
+    '''
+    为什么ZeRO-3 下不能启用 low_cpu_mem_usage？
+        当 ZeRO-3 启用时，模型参数不会以完整的形式驻留在单个 GPU 或 CPU 上，而是被拆分成分片（shard）。
+        low_cpu_mem_usage 的机制依赖 先在 CPU 上完整初始化模型 再转移到 GPU 或分片。
+    '''
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name_or_path,
         config=config,
@@ -795,6 +946,25 @@ def run_training(trainer, max_train_samples, is_main_process):
     metrics["train_samples"] = max_train_samples
     trainer.log_metrics("train", metrics)
     trainer.save_metrics("train", metrics)
+
+    '''
+    主要用来保存 训练状态（training state），方便以后 恢复训练。
+    存储内容：
+        训练进度信息：
+            当前训练步数 global_step
+            当前 epoch
+            训练中的随机数种子（用于可复现训练）
+            学习率调度器的状态（scheduler）
+            优化器的状态（optimizer）
+            训练累计的梯度、混合精度状态（如果有用 AMP / FP16）
+        分布式训练信息（如果在多卡或分布式场景中）
+        其他 Trainer 状态信息：
+            是否已经完成 checkpoint
+            训练时的日志记录状态
+        存储位置
+            output_dir/
+            ├── trainer_state.json
+    '''
     trainer.save_state()
 
     if trainer.is_world_process_zero():
