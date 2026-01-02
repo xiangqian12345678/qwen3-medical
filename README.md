@@ -135,6 +135,11 @@
 
     提供基于vllm的部署脚本和访问脚本
 
+### 分布式训练
+
+    配置环境变量： world_size (总GPU数)
+    执行脚本： torch_run目录下有分布式训练脚本
+
 ### 部分参考(方便的话帮他们点个赞)
 
 - [Qwen3微调演练平台](https://github.com/lijiayi-ai/Qwen3-FineTuning-Playground) — Qwen3微调演练平台
