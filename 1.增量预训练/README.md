@@ -47,68 +47,108 @@
 
 ## 4.预训练数据集
 
-### 4.1 开源通用中文数据
+### 4.1 通用中文数据集
 
+#### 4.1.1 百科与综合性语料
 - linly-ai/chinese-pretraining-dataset
 
   汇聚百科、新闻、小说、网页等多来源中文语料，已做基础清洗，适合大模型训练
+
+#### 4.1.2 新闻类语料
 - THUCNews
 
   新闻分类语料，较小规模，可做预训练或微调
+
+#### 4.1.3 超大规模语料
 - WudaoCorpus
 
   清华/悟道团队收集的超大规模中文语料（非公开，需要授权）
+
+#### 4.1.4 评估辅助语料
 - ChineseGLUE 数据集
 
   主要用于下游任务评估，但可辅助预训练做语义理解
 
-### 4.2 开源医疗数据
+### 4.2 医疗专业数据集
 
-#### 医疗通用语料 / 预训练语料
+#### 4.2.1 医疗通用语料与预训练语料
 
-* **shibing624/medical**
-  ：中文医疗大数据集，包括百科、教材文本与中英文问答对，适合中文医疗预训练/微调。([链接](https://huggingface.co/datasets/shibing624/medical))
+- shibing624/medical
 
-#### 多语种 / 医疗健康文本
+  中文医疗大数据集，包括百科、教材文本与中英文问答对，适合中文医疗预训练/微调
 
-* **nlp‑guild/medical‑data**：社区贡献的医疗 NLP
-  数据集合集，包含疾病、症状、药物等文本样例。([链接](https://huggingface.co/datasets/nlp-guild/medical-data))
-* **Med‑dataset/Med_Dataset**：集合多个医疗 NLP
-  任务的数据，如问答指令对、医患对话、研究问题/答案等。([链接](https://huggingface.co/datasets/Med-dataset/Med_Dataset))
-* **kamruzzaman‑asif/Diseases_Dataset**
-  ：疾病名称、症状与治疗建议组合的数据，用于分类/生成/信息提取任务。([链接](https://www.selectdataset.com/dataset/0bc1f480d7385ce0e470630d1bb6636e))
+  [链接](https://huggingface.co/datasets/shibing624/medical)
 
-#### 临床信息抽取 / 临床 NLP
+#### 4.2.2 多语种医疗健康文本
 
-* **mitclinicalml/clinical‑ie**：与 EMNLP
-  研究相关的临床信息抽取数据集（需同意访问条件）。([链接](https://huggingface.co/datasets/mitclinicalml/clinical-ie))
+- nlp‑guild/medical‑data
 
-#### 专门整理为医疗预训练任务的合集
+  社区贡献的医疗 NLP 数据集合集，包含疾病、症状、药物等文本样例
 
-* **mkurman/medical‑pre‑training‑datasets**
-  ：收集多个适合大模型预训练的英文医学数据集，如临床指南、期刊文章等。([链接](https://huggingface.co/collections/mkurman/medical-pre-training-datasets))
-* **NeuML/medical‑and‑scientific‑literature‑datasets**
-  ：医学与科学文献语料集合，用于医学语言理解或生物医学知识注入。([链接](https://huggingface.co/collections/NeuML/medical-and-scientific-literature-datasets))
+  [链接](https://huggingface.co/datasets/nlp-guild/medical-data)
 
-#### 常见的通用医学语料 & 相关数据（可补充预训练语料）
+- Med‑dataset/Med_Dataset
 
-##### 1.公共大规模医学论文与文献
+  集合多个医疗 NLP 任务的数据，如问答指令对、医患对话、研究问题/答案等
 
-* **PubMed / PubMed Central (PMC)**：生物医学文献数据库，可抓取摘要/全文用于训练。
-* **BioASQ / MedQA**：医学问答/多任务数据集，可转换为 Hugging Face 格式。
+  [链接](https://huggingface.co/datasets/Med-dataset/Med_Dataset)
 
-##### 2.临床电子病历类数据
+- kamruzzaman‑asif/Diseases_Dataset
 
-* **MIMIC 系列（如 MIMIC‑III / MIMIC‑IV / MIMIC‑CXR 报告）**：真实临床数据集，用于临床
-  NLP/生成任务（需访问许可）。([链接](https://huggingface.co/foundationmodels/MIMIC-medical-report))
+  疾病名称、症状与治疗建议组合的数据，用于分类/生成/信息提取任务
+
+  [链接](https://www.selectdataset.com/dataset/0bc1f480d7385ce0e470630d1bb6636e)
+
+#### 4.2.3 临床信息抽取与临床 NLP
+
+- mitclinicalml/clinical‑ie
+
+  与 EMNLP 研究相关的临床信息抽取数据集（需同意访问条件）
+
+  [链接](https://huggingface.co/datasets/mitclinicalml/clinical-ie)
+
+#### 4.2.4 医疗预训练任务数据合集
+
+- mkurman/medical‑pre‑training‑datasets
+
+  收集多个适合大模型预训练的英文医学数据集，如临床指南、期刊文章等
+
+  [链接](https://huggingface.co/collections/mkurman/medical-pre-training-datasets)
+
+- NeuML/medical‑and‑scientific‑literature‑datasets
+
+  医学与科学文献语料集合，用于医学语言理解或生物医学知识注入
+
+  [链接](https://huggingface.co/collections/NeuML/medical-and-scientific-literature-datasets)
+
+#### 4.2.5 公共大规模医学文献
+
+##### 4.2.5.1 生物医学文献数据库
+- PubMed / PubMed Central (PMC)
+
+  生物医学文献数据库，可抓取摘要/全文用于训练
+
+##### 4.2.5.2 医学问答与多任务数据集
+- BioASQ / MedQA
+
+  医学问答/多任务数据集，可转换为 Hugging Face 格式
+
+#### 4.2.6 临床电子病历数据
+
+- MIMIC 系列
+
+  包括 MIMIC‑III/MIMIC‑IV/MIMIC‑CXR 报告
+
+  真实临床数据集，用于临床 NLP/生成任务（需访问许可）
+
+  [链接](https://huggingface.co/foundationmodels/MIMIC-medical-report)
 
 ## 5.大模型预训练策略
 
-* **通用语料 + 医疗语料混合预训练**：先用 Common Crawl / RefinedWeb 语料预训练，再用医疗语料做 domain adaptation。
-* **任务设计与转换**：将临床问答、指南、医患对话等转换成指令格式或生成格式，适配大语言模型训练。
-* **医疗多任务**：NER、分类、实体关系抽取、问答等任务数据集均可用于微调与评估。
+- 通用语料 + 医疗语料混合预训练：先用 Common Crawl/RefinedWeb 语料预训练，再用医疗语料做 domain adaptation。 
+- 任务设计与转换：将临床问答、指南、医患对话等转换成指令格式或生成格式，适配大语言模型训练。
+- 医疗多任务：NER、分类、实体关系抽取、问答等任务数据集均可用于微调与评估。
 
----
 
 ## 6.Hugging Face 上查找更多医学数据集
 
@@ -151,7 +191,7 @@ print(all_med)
         {
           "text": "[QUESTION] 什么是高血压？ [ANSWER] 高血压是一种以动脉血压升高为特征的慢性病。"
         }
-    方法 B：指令式格式 / Instruction Tuning
+    方法 B：指令式格式/Instruction Tuning
         {
           "text": "Instruction: 请回答以下问题：什么是高血压？\nOutput: 高血压是一种以动脉血压升高为特征的慢性病。"
         }
@@ -213,7 +253,7 @@ print(all_med)
     2.本地文件
         原始数据（HF or 本地）
                 ↓
-        map：清洗 / 过滤
+        map：清洗/过滤
                 ↓
         map：tokenize（batched）
                 ↓

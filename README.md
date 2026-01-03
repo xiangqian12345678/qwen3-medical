@@ -92,7 +92,7 @@
 
 | 部署策略              | 显存需求                     |
   |-------------------|--------------------------|
-| FP16 / BF16 单卡    | ≥ 80GB（模型 + 激活 + buffer） |
+| FP16/BF16 单卡      | ≥ 80GB（模型 + 激活 + buffer） |
 | FP16 + 8K context | 90–100GB                 |
 | FP32 单卡           | ≥ 130–140GB              |
 
@@ -152,79 +152,115 @@
 
 ### 📚 Dataset
 
-#### 医疗数据集
+## 1. 通用数据集合
 
-- 240万条中文医疗数据集(
-  包括预训练、指令微调和奖励数据集)：[shibing624/medical](https://huggingface.co/datasets/shibing624/medical)
-- 22万条中文医疗对话数据集(
-  华佗项目)：[shibing624/huatuo_medical_qa_sharegpt](https://huggingface.co/datasets/shibing624/huatuo_medical_qa_sharegpt)
-  【本项目支持格式】
+### 预训练数据集
 
-#### 通用数据集
+- Linly-AI/Chinese-pretraining-dataset (16GB中英文无监督、平行语料)
+- wikipedia-cn-20230720-filtered (524MB中文维基百科语料)
 
-##### Pretraining datasets(预训练数据集)
+### 微调数据集
 
+- shibing624/sharegpt_gpt4 (10万条多语言ShareGPT GPT4多轮对话数据集)
+- anon8231489123/ShareGPT_Vicuna_unfiltered (9万条英文ShareGPT多轮对话数据集 未确认内容)
+- BelleGroup/train_0.5M_CN (50万条中文ChatGPT指令Belle数据集)
+- BelleGroup/train_1M_CN (100万条中文ChatGPT指令Belle数据集)
+- shibing624/alpaca-zh (2万条中文ChatGPT指令Alpaca数据集)
+- Chinese-Vicuna/guanaco_belle_merge_v1.0 (69万条中文指令Guanaco数据集)
+- RyokoAI/ShareGPT52K (5万条英文ChatGPT多轮对话数据集)
+- BelleGroup/multiturn_chat_0.8M (80万条中文ChatGPT多轮对话数据集)
+- FreedomIntelligence/ShareGPT-CN (3.8万条中文ShareGPT多轮对话数据集)
+- shibing624/roleplay-zh-sharegpt-gpt4-data (7千条中文角色扮演多轮对话数据集)
+
+### DPO数据集
+
+- shibing624/DPO-En-Zh-20k-Preference (2万条中英文偏好数据集)
+- SAGI-1/ultrafeedback_binarized_dpo
+- aladinDJ/ultramix-DPO-annotated
+- Finnish-NLP/ultrachat_dpo_sft_deepl_kaannetty
+- Palash123/dpo_anthropic_hh_rlhf
+
+### PPO数据集
+
+- Dahoas/pythia_125M_ppo_hh_eval_human
 -
 
-16GB中英文无监督、平行语料[Linly-AI/Chinese-pretraining-dataset](https://huggingface.co/datasets/Linly-AI/Chinese-pretraining-dataset)
--
-524MB中文维基百科语料[wikipedia-cn-20230720-filtered](https://huggingface.co/datasets/pleisto/wikipedia-cn-20230720-filtered)
+### RM数据集
 
-##### Supervised fine-tuning datasets(指令微调数据集)
+- tasksource/oasst1_pairwise_rlhf_reward (2万条多语言oasst1的reward数据集)
+- Dahoas/full-hh-rlhf (11万条英文hh-rlhf的reward数据集)
+- Dahoas/static-hh (9万条英文reward数据集)
+- Dahoas/rm-static (7万条英文Reward数据集)
+- yitingxie/rlhf-reward-datasets (7万条英文Reward数据集)
+- liyucheng/zhihu_rlhf_3k (3千条中文知乎问答)
 
-- 10万条多语言ShareGPT
-  GPT4多轮对话数据集：[shibing624/sharegpt_gpt4](https://huggingface.co/datasets/shibing624/sharegpt_gpt4) 【本项目支持格式】
--
+## 2. 医疗数据集合
 
-9万条英文ShareGPT多轮对话数集：[anon8231489123/ShareGPT_Vicuna_unfiltered](https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered)
-【本项目支持格式】
+### 预训练数据集
 
-- 50万条中文ChatGPT指令Belle数据集：[BelleGroup/train_0.5M_CN](https://huggingface.co/datasets/BelleGroup/train_0.5M_CN)
-- 100万条中文ChatGPT指令Belle数据集：[BelleGroup/train_1M_CN](https://huggingface.co/datasets/BelleGroup/train_1M_CN)
--
+- shibing624/medical (240万条中文医疗数据集，包括预训练、指令微调和奖励数据集)
+- MedRAG/pubmed
+- suolyer/pile_pubmed-central (海量医学文献摘要与全文)
+- hejazizo/mimic-iii (临床笔记、出院摘要、护理记录等)
+- raphus/clinical_trials_gov_COMP631_project
 
-5万条英文ChatGPT指令Alpaca数据集：[50k English Stanford Alpaca dataset](https://github.com/tatsu-lab/stanford_alpaca#data-release)
+### 微调数据集
 
-- 2万条中文ChatGPT指令Alpaca数据集：[shibing624/alpaca-zh](https://huggingface.co/datasets/shibing624/alpaca-zh)
-- 69万条中文指令Guanaco数据集(
-  Belle50万条+Guanaco19万条)：[Chinese-Vicuna/guanaco_belle_merge_v1.0](https://huggingface.co/datasets/Chinese-Vicuna/guanaco_belle_merge_v1.0)
-- 5万条英文ChatGPT多轮对话数据集：[RyokoAI/ShareGPT52K](https://huggingface.co/datasets/RyokoAI/ShareGPT52K)
--
+- qiaojin/PubMedQA
+- shibing624/huatuo_medical_qa_sharegpt (22万条中文医疗对话数据集，华佗项目)
+- shibing624/medical (240万条中文医疗数据集，包括预训练、指令微调和奖励数据集)
+- MedAlpaca (medalpaca/medical_meadow_*)
+- MedMCQA (medmcqa，4选1医疗考试题)
+- iCliniq (真实在线问诊)
+- HealthCareMagic (真实医生回答)
+- CBLUE (中文医疗必备，包含医疗问答、诊断推理、实体识别)
+- MedQuAD (约47k问答对)
+- BigBIO (100+生物医疗NLP任务数据集)
+- dthung/med-fact-check-sft-dataset
 
-80万条中文ChatGPT多轮对话数据集：[BelleGroup/multiturn_chat_0.8M](https://huggingface.co/datasets/BelleGroup/multiturn_chat_0.8M)
+### DPO数据集
 
-- 116万条中文ChatGPT多轮对话数据集：[fnlp/moss-002-sft-data](https://huggingface.co/datasets/fnlp/moss-002-sft-data)
--
+- shibing624/medical (240万条中文医疗数据集，包含奖励数据集)
+- FineMed (~33,000 DPO样本，三元组+SFT样本)
+- Anthropic (可用于医学prompt微调)
+- HealthCareMagic (医生问答，需构造)
+- iCliniq (医生问答，需构造)
+- liyucheng/zhihu_rlhf_3k (3千条中文知乎问答偏好数据集)
 
-3.8万条中文ShareGPT多轮对话数据集：[FreedomIntelligence/ShareGPT-CN](https://huggingface.co/datasets/FreedomIntelligence/ShareGPT-CN)
--
-130万条中文微调数据集（汇总）：[zhuangxialie/Llama3-Chinese-Dataset](https://modelscope.cn/datasets/zhuangxialie/Llama3-Chinese-Dataset/dataPeview)
-【本项目支持格式】
+### GRPO数据集
 
--
+- MedQA (USMLE/CMLE，多选QA，correctness/reasoning)
+- MedMCQA (多选QA，医学知识评测，医学正确性)
+- PubMedQA (文献QA，循证医学，evidence/factuality)
+- 自建医疗错误集 (错误样本，hallucination penalty)
 
-7千条中文角色扮演多轮对话数据集：[shibing624/roleplay-zh-sharegpt-gpt4-data](https://huggingface.co/datasets/shibing624/roleplay-zh-sharegpt-gpt4-data)
-【本项目支持格式】
+### ORPO数据集
 
-#### Preference datasets(偏好数据集)
+- daqc/medicina-qa-dpo-orpo-format-es
 
--
+### PPO数据集
 
-2万条中英文偏好数据集：[shibing624/DPO-En-Zh-20k-Preference](https://huggingface.co/datasets/shibing624/DPO-En-Zh-20k-Preference)
-【本项目支持格式】
+- OpenAssistant/oasst1 (原版oasst1数据集)
 
-- 原版的oasst1数据集：[OpenAssistant/oasst1](https://huggingface.co/datasets/OpenAssistant/oasst1)
--
+### RM数据集
 
-2万条多语言oasst1的reward数据集：[tasksource/oasst1_pairwise_rlhf_reward](https://huggingface.co/datasets/tasksource/oasst1_pairwise_rlhf_reward)
+- shibing624/medical (240万条中文医疗数据集，包含奖励数据集)
+- HealthCareMagic (医生问答，需构造)
+- iCliniq (医生问答，需构造)
+- MedQA (USMLE/CMLE，多选QA，需构造)
+- MedMCQA (多选QA，医学知识评测，需构造)
+- PubMedQA (文献QA，循证医学，需构造)
+- Anthropic HH (偏好对比，有害性对齐)
+- tasksource/oasst1_pairwise_rlhf_reward (2万条多语言oasst1的reward数据集)
+- Dahoas/full-hh-rlhf (11万条英文hh-rlhf的reward数据集)
+- Dahoas/static-hh (9万条英文reward数据集)
+- Dahoas/rm-static (7万条英文Reward数据集)
+- yitingxie/rlhf-reward-datasets (7万条英文Reward数据集)
+- liyucheng/zhihu_rlhf_3k (3千条中文知乎问答)
 
-- 11万条英文hh-rlhf的reward数据集：[Dahoas/full-hh-rlhf](https://huggingface.co/datasets/Dahoas/full-hh-rlhf)
-- 9万条英文reward数据集(来自Anthropic's Helpful Harmless
-  dataset)：[Dahoas/static-hh](https://huggingface.co/datasets/Dahoas/static-hh)
-- 7万条英文reward数据集（来源同上）：[Dahoas/rm-static](https://huggingface.co/datasets/Dahoas/rm-static)
--
+### 使用流程
 
-7万条繁体中文的reward数据集（翻译自rm-static）[liswei/rm-static-m2m100-zh](https://huggingface.co/datasets/liswei/rm-static-m2m100-zh)
-
-- 7万条英文Reward数据集：[yitingxie/rlhf-reward-datasets](https://huggingface.co/datasets/yitingxie/rlhf-reward-datasets)
-- 3千条中文知乎问答偏好数据集：[liyucheng/zhihu_rlhf_3k](https://huggingface.co/datasets/liyucheng/zhihu_rlhf_3k)
+    数据采集 → 脱敏清洗 → 规范化标注 → 模型训练 → 自动 + 人工评测 → 安全策略 + 上线
+    1.数据采集
+        不同的训练需要不同字段
+        确认数据集核心字段是否存在或能够转化
