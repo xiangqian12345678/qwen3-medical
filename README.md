@@ -60,6 +60,8 @@
   
 ```
 
+[DPO文档](3.强化/DPO/README.md)
+
 4.2 ORPO
 
 ```bash
@@ -67,12 +69,16 @@
   sh run_orpo.sh
 ```
 
+[ORPO文档](3.强化/ORPO/README.md)
+
 4.3 GRPO
 
 ```bash
   cd 3.强化/GRPO
   sh run_grpo.sh
 ```
+
+[GRPO文档](3.强化/GRPO/README.md)
 
 4.4 PPO
 
@@ -86,6 +92,10 @@
   sh run_ppo.sh
 ```
 
+[奖励模型训练](3.强化/RM/README.md)
+
+[PPO模型训练](3.强化/PPO/README.md)
+
 5. 量化大模型
 
 ```bash
@@ -93,22 +103,7 @@
    sh run_quantiz.sh
 ```
 
-32B大模型部署显存：
-
-| 部署策略              | 显存需求                     |
-  |-------------------|--------------------------|
-| FP16/BF16 单卡      | ≥ 80GB（模型 + 激活 + buffer） |
-| FP16 + 8K context | 90–100GB                 |
-| FP32 单卡           | ≥ 130–140GB              |
-
-    32B量化大模型部署显存：
-
-| 量化类型      | 权重显存    | 激活显存   | 总显存估计   |
-  |-----------|---------|--------|---------|
-| FP16      | 64GB    | 6–12GB | 70–80GB |
-| INT8      | 32GB    | 6–12GB | 38–44GB |
-| INT4      | 16GB    | 6–12GB | 22–28GB |
-| INT4+GPTQ | 10–11GB | 6–12GB | 16–23GB |
+[量化大模型](4.量化/README.md)
 
 6.蒸馏
 

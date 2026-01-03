@@ -1,6 +1,12 @@
 ## 训练命令
+### 单机训练
+```bash
+  sh run_dpo.sh
+```
+    
+### 分布式训练
 
-    sh run_dpo.sh
+[分布式训练文档](./torchrun/README.md)
 
 ## 数据处理流程
 
