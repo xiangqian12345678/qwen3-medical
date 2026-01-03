@@ -88,7 +88,12 @@
 
 5. 量化大模型
 
-   32B大模型部署显存：
+```bash
+   cd 4.量化/
+   sh run_quantiz.sh
+```
+
+32B大模型部署显存：
 
 | 部署策略              | 显存需求                     |
   |-------------------|--------------------------|
@@ -107,15 +112,17 @@
 
 6.蒸馏
 
-这部分暂时不提供，未来补充
-[模型蒸馏](https://github.com/xiangqian19831224/qwen3-pretrain-sft-rl-distill-eval/tree/main/4-%E8%92%B8%E9%A6%8F)
+```bash
+    cd 5.蒸馏/
+    sh run_train.sh
+```
 
 7.模型评估
 
 ```bash
   # 困惑度
-
-  sh run_quantize.sh
+  cd 6.评估/
+  sh perplexity.sh
 ```
 
 8.lora合并
